@@ -1,0 +1,49 @@
+/*
+This module turns tokenized passages into intermediate posting records
+of the form (term, doc_id, term_frequency).
+
+Each distinct term produces one record per document. term_frequency
+counts how many times the term occurs in that document.
+
+The builder buffers these records in memory so they can later be
+sorted and written to disk.
+*/
+use std::collections::HashMap;
+
+#[derive(Default, Debug, Clone)]
+pub struct IntermediatePosting {
+    pub term: String,
+    pub doc_id: u32,
+    pub term_frequency: u32,
+}
+
+#[derive(Default, Debug)]
+pub struct IndexBuilder {
+    postings: Vec<IntermediatePosting>,
+}
+
+impl IndexBuilder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn add_document(&mut self, doc_id: u32, tokens: Vec<String>) -> u32{
+        let doc_len = tokens.len() as u32;
+        let mut term_counts: HashMap<String, u32> = HashMap::new();
+        for term in tokens {
+            if let Some(count) = term_counts.get_mut(&term) {
+                *count += 1;
+            } else {
+                term_counts.insert(term.clone(), 1);
+            }
+        }
+        for (term, frequency) in term_counts {
+            self.postings.push(IntermediatePosting {
+                term,
+                doc_id,
+                term_frequency: frequency,
+            });
+        }
+        doc_len
+    }
+}
