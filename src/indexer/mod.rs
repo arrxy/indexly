@@ -3,6 +3,8 @@ mod builder;
 mod writer;
 mod run_reader;
 
+pub(crate) use run_reader::read_next_posting;
+
 use std::fs::{self, File};
 use std::io;
 use std::io::{BufWriter, Write};
