@@ -2,6 +2,8 @@ mod lexicon;
 mod inverted_index;
 mod page_table;
 
+pub(crate) use lexicon::Lexicon;
+
 /*
     This module contains the data structures for the search engine's inverted index.
     doc 0: This is a test document.

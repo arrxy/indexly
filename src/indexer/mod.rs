@@ -2,8 +2,10 @@ mod reader;
 mod builder;
 mod writer;
 mod run_reader;
+mod postings_writer;
 
 pub(crate) use run_reader::read_next_posting;
+pub(crate) use postings_writer::write_index;
 
 use std::fs::{self, File};
 use std::io;
