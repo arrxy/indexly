@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 
-use super::{build_runs, builder::IndexBuilder, reader};
+use super::{build_runs, builder::IndexBuilder, reader, sorting::PostingSorter};
 use crate::tokenizer::Tokenizer;
 
 const WORK_BYTES: usize = 64 * 1024;
@@ -24,6 +24,7 @@ pub fn build_runs_parallel<T: Tokenizer + Sync>(
     max_batch_bytes: usize,
     tokenizer: &T,
     workers: usize,
+    sorter: &dyn PostingSorter,
 ) -> io::Result<usize> {
     if workers == 0 || max_batch_bytes == 0 {
         return Err(io::Error::new(
@@ -32,7 +33,7 @@ pub fn build_runs_parallel<T: Tokenizer + Sync>(
         ));
     }
     if workers == 1 {
-        return build_runs(input_path, output_path, max_batch_bytes, tokenizer);
+        return build_runs(input_path, output_path, max_batch_bytes, tokenizer, sorter);
     }
 
     fs::create_dir_all(output_path)?;
@@ -59,6 +60,7 @@ pub fn build_runs_parallel<T: Tokenizer + Sync>(
                     output,
                     max_batch_bytes,
                     tokenizer,
+                    sorter,
                 );
                 if result.is_err() {
                     cancelled.store(true, Ordering::Relaxed);
@@ -126,6 +128,7 @@ fn run_worker<T: Tokenizer>(
     output: &Path,
     max_batch_bytes: usize,
     tokenizer: &T,
+    sorter: &dyn PostingSorter,
 ) -> io::Result<()> {
     let mut builder = IndexBuilder::new();
     while !cancelled.load(Ordering::Relaxed) {
@@ -146,7 +149,7 @@ fn run_worker<T: Tokenizer>(
             metadata.extend_from_slice(&passage_id.to_le_bytes());
             metadata.extend_from_slice(&doc_length.to_le_bytes());
             if builder.buffered_bytes >= max_batch_bytes {
-                flush_run(&mut builder, output, run_count)?;
+                flush_run(&mut builder, output, run_count, sorter)?;
             }
         }
         // One lock and one contiguous write per input batch, not per term.
@@ -157,18 +160,23 @@ fn run_worker<T: Tokenizer>(
         page.write_all(&metadata)?;
     }
     if !cancelled.load(Ordering::Relaxed) && builder.postings_count() > 0 {
-        flush_run(&mut builder, output, run_count)?;
+        flush_run(&mut builder, output, run_count, sorter)?;
     }
     Ok(())
 }
 
-fn flush_run(builder: &mut IndexBuilder, output: &Path, counter: &AtomicUsize) -> io::Result<()> {
+fn flush_run(
+    builder: &mut IndexBuilder,
+    output: &Path,
+    counter: &AtomicUsize,
+    sorter: &dyn PostingSorter,
+) -> io::Result<()> {
     let number = counter.fetch_add(1, Ordering::Relaxed) + 1;
     let path = output.join(format!("run_{number:04}.bin"));
     let path = path
         .to_str()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Output path must be UTF-8"))?;
-    builder.flush_to_file(path)
+    builder.flush_to_file(path, sorter)
 }
 
 #[cfg(test)]
@@ -206,6 +214,7 @@ mod tests {
             1,
             &SimpleTokenizer,
             4,
+            &super::super::sorting::CpuSorter::default(),
         );
         assert!(result.is_err());
         fs::remove_dir_all(root).unwrap();

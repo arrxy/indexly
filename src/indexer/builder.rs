@@ -28,7 +28,7 @@ impl IndexBuilder {
         Self::default()
     }
 
-    pub fn add_document(&mut self, doc_id: u32, tokens: Vec<String>) -> u32{
+    pub fn add_document(&mut self, doc_id: u32, tokens: Vec<String>) -> u32 {
         let doc_len = tokens.len() as u32;
         let mut term_counts: HashMap<String, u32> = HashMap::new();
         for term in tokens {
@@ -49,8 +49,12 @@ impl IndexBuilder {
         self.postings.len()
     }
 
-    pub fn flush_to_file(&mut self, file_path: &str) -> std::io::Result<()> {
-        crate::indexer::writer::write_run(file_path, &mut self.postings)?;
+    pub fn flush_to_file(
+        &mut self,
+        file_path: &str,
+        sorter: &dyn super::sorting::PostingSorter,
+    ) -> std::io::Result<()> {
+        crate::indexer::writer::write_run(file_path, &mut self.postings, sorter)?;
         self.postings.clear();
         self.buffered_bytes = 0;
         Ok(())
