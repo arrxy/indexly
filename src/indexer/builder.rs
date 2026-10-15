@@ -20,6 +20,7 @@ pub struct IntermediatePosting {
 #[derive(Default, Debug)]
 pub struct IndexBuilder {
     postings: Vec<IntermediatePosting>,
+    pub(crate) buffered_bytes: usize,
 }
 
 impl IndexBuilder {
@@ -38,6 +39,7 @@ impl IndexBuilder {
             }
         }
         for (term, frequency) in term_counts {
+            self.buffered_bytes += 12 + term.len();
             self.postings.push(IntermediatePosting {
                 term,
                 doc_id,
@@ -54,6 +56,7 @@ impl IndexBuilder {
     pub fn flush_to_file(&mut self, file_path: &str) -> std::io::Result<()> {
         crate::indexer::writer::write_run(file_path, &mut self.postings)?;
         self.postings.clear();
+        self.buffered_bytes = 0;
         Ok(())
     }
 }

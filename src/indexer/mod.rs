@@ -1,6 +1,7 @@
 mod reader;
 mod builder;
 mod writer;
+mod run_reader;
 
 use std::fs::{self, File};
 use std::io;
@@ -11,12 +12,12 @@ use builder::IndexBuilder;
 
 pub fn build_runs<T: Tokenizer> (input_path: &str,
                                 output_path: &str,
-                                max_postings: usize,
+                                 max_batch_bytes: usize,
                                 tokenizer: &T) -> io::Result<usize> {
 
-    if max_postings == 0 {
+    if max_batch_bytes == 0 {
         return Err(io::Error::new(
-            io::ErrorKind::InvalidInput, "max_postings must be greater than 0")
+            io::ErrorKind::InvalidInput, "max_batch_bytes must be greater than 0")
         );
     }
     fs::create_dir_all(output_path)?;
@@ -36,7 +37,7 @@ pub fn build_runs<T: Tokenizer> (input_path: &str,
         let doc_length = builder.add_document(doc_id, tokens);
         page_writer.write_all(&passage_id.to_le_bytes())?;
         page_writer.write_all(&doc_length.to_le_bytes())?;
-        if builder.postings_count() >= max_postings {
+        if builder.buffered_bytes >= max_batch_bytes {
             run_count += 1;
             let path = format!("{output_path}/run_{run_count:04}.bin");
             builder.flush_to_file(&path)?;
@@ -49,4 +50,19 @@ pub fn build_runs<T: Tokenizer> (input_path: &str,
     }
     page_writer.flush()?;
     Ok(run_count)
+}
+
+pub fn inspect_run(file_path: &str) -> std::io::Result<()> {
+    let file = std::fs::File::open(file_path)?;
+    let mut reader = std::io::BufReader::new(file);
+
+    while let Some(posting) = run_reader::read_next_posting(&mut reader)? {
+        println!(
+            "{} → (doc_id: {}, frequency: {})",
+            posting.term,
+            posting.doc_id,
+            posting.term_frequency,
+        );
+    }
+    Ok(())
 }
