@@ -39,5 +39,5 @@ pub fn write_run(file_path: &str, postings: &mut [IntermediatePosting]) -> io::R
         writer.write_all(&posting.doc_id.to_le_bytes())?;
         writer.write_all(&posting.term_frequency.to_le_bytes())?;
     }
-    Ok(())
+    writer.flush()
 }
