@@ -32,11 +32,7 @@ impl IndexBuilder {
         let doc_len = tokens.len() as u32;
         let mut term_counts: HashMap<String, u32> = HashMap::new();
         for term in tokens {
-            if let Some(count) = term_counts.get_mut(&term) {
-                *count += 1;
-            } else {
-                term_counts.insert(term.clone(), 1);
-            }
+            *term_counts.entry(term).or_insert(0) += 1;
         }
         for (term, frequency) in term_counts {
             self.buffered_bytes += 12 + term.len();

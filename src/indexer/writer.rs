@@ -16,7 +16,7 @@ use std::fs::File;
 use std::io::{self, BufWriter, Write};
 pub fn write_run(file_path: &str, postings: &mut [IntermediatePosting]) -> io::Result<()> {
     // Sort postings by term, then by doc_id
-    postings.sort_by(|a, b| {
+    postings.sort_unstable_by(|a, b| {
         let term_cmp = a.term.cmp(&b.term);
         if term_cmp == std::cmp::Ordering::Equal {
             a.doc_id.cmp(&b.doc_id)
