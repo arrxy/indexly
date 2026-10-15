@@ -1,3 +1,6 @@
+mod parallel;
+pub(crate) use parallel::build_runs_parallel;
+
 mod reader;
 mod builder;
 mod writer;

@@ -4,7 +4,7 @@ mod indexer;
 mod merger;
 mod tokenizer;
 
-use std::fs::{self, File};
+use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -15,7 +15,9 @@ Options:
   --output <directory>      Output directory (default: ./output/index)
   --batch-bytes <number>    Serialized bytes per batch (default: 65536)
   --block-size <number>     Postings per compressed block (default: 128)
-  --merge-fan-in <number>   Maximum inputs per merge (default: 64)
+  --merge-fan-in <number>   Maximum inputs per merge (default: 64; maximum: 128)
+  --threads <number>       Run-building workers (default: 1)
+  --merge-threads <number> Merge workers (default: 1; capped by open-file budget)
   --keep-intermediate      Keep intermediate files (default: remove on success)
   --help                   Show this help
 ";
@@ -27,11 +29,12 @@ struct Options {
     block_size: usize,
     merge_fan_in: usize,
     keep_intermediate: bool,
+    threads: usize,
+    merge_threads: usize,
 }
 
 fn main_test() -> io::Result<()> {
-    let lexicon =
-        index::Lexicon::load("./output/final_index_02/lexicon.bin")?;
+    let lexicon = index::Lexicon::load("./output/final_index_02/lexicon.bin")?;
 
     println!("Loaded {} terms", lexicon.terms.len());
 
@@ -73,12 +76,18 @@ fn main() -> io::Result<()> {
         .ok_or_else(|| invalid("Output path must be UTF-8"))?;
     let total_start = Instant::now();
 
+    println!(
+        "Workers: build {}, merge {}; batch threshold {} bytes per build worker",
+        options.threads, options.merge_threads, options.batch_bytes
+    );
+
     let stage = Instant::now();
-    let run_count = indexer::build_runs(
+    let run_count = indexer::build_runs_parallel(
         &options.dataset,
         work_str,
         options.batch_bytes,
         &tokenizer::SimpleTokenizer,
+        options.threads,
     )?;
     println!(
         "Build: {run_count} runs in {:.2}s",
@@ -91,7 +100,13 @@ fn main() -> io::Result<()> {
         .collect();
 
     let stage = Instant::now();
-    let merged = merge_all(runs, &work, options.merge_fan_in, options.keep_intermediate)?;
+    let merged = merger::merge_all(
+        runs,
+        &work,
+        options.merge_fan_in,
+        options.merge_threads,
+        options.keep_intermediate,
+    )?;
     println!("Merge: {:.2}s", stage.elapsed().as_secs_f64());
 
     let stage = Instant::now();
@@ -120,54 +135,6 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
-fn merge_all(
-    mut runs: Vec<PathBuf>,
-    work: &Path,
-    fan_in: usize,
-    keep_intermediate: bool,
-) -> io::Result<PathBuf> {
-    if runs.is_empty() {
-        let empty = work.join("empty.bin");
-        File::create(&empty)?;
-        return Ok(empty);
-    }
-
-    let mut pass = 0;
-    while runs.len() > 1 {
-        pass += 1;
-        let directory = work.join(format!("pass_{pass:03}"));
-        fs::create_dir(&directory)?;
-        let mut next = Vec::new();
-
-        for (number, group) in runs.chunks(fan_in).enumerate() {
-            if group.len() == 1 {
-                next.push(group[0].clone());
-                continue;
-            }
-
-            let output = directory.join(format!("run_{:04}.bin", number + 1));
-            merger::merge_runs(group, &output)?;
-            next.push(output);
-
-            // This group's replacement was written successfully.
-            if !keep_intermediate {
-                for input in group {
-                    fs::remove_file(input)?;
-                }
-            }
-        }
-
-        println!(
-            "Merge pass {pass}: {} inputs -> {} outputs",
-            runs.len(),
-            next.len()
-        );
-        runs = next;
-    }
-
-    Ok(runs.pop().unwrap())
-}
-
 fn parse_options() -> io::Result<Option<Options>> {
     let mut args = std::env::args().skip(1);
     let mut dataset = None;
@@ -176,6 +143,8 @@ fn parse_options() -> io::Result<Option<Options>> {
     let mut block_size = 128;
     let mut merge_fan_in = 64;
     let mut keep_intermediate = false;
+    let mut threads = 1;
+    let mut merge_threads = 1;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -187,6 +156,8 @@ fn parse_options() -> io::Result<Option<Options>> {
             "--batch-bytes" => batch_bytes = positive_number(&mut args, "--batch-bytes")?,
             "--block-size" => block_size = positive_number(&mut args, "--block-size")?,
             "--merge-fan-in" => merge_fan_in = positive_number(&mut args, "--merge-fan-in")?,
+            "--threads" => threads = positive_number(&mut args, "--threads")?,
+            "--merge-threads" => merge_threads = positive_number(&mut args, "--merge-threads")?,
             "--keep-intermediate" => keep_intermediate = true,
             _ if arg.starts_with('-') => return Err(invalid(format!("Unknown option: {arg}"))),
             _ => {
@@ -198,8 +169,8 @@ fn parse_options() -> io::Result<Option<Options>> {
     }
 
     let dataset = dataset.ok_or_else(|| invalid(HELP))?;
-    if merge_fan_in < 2 {
-        return Err(invalid("--merge-fan-in must be at least 2"));
+    if !(2..=merger::MAX_OPEN_INPUTS).contains(&merge_fan_in) {
+        return Err(invalid("--merge-fan-in must be between 2 and 128"));
     }
     if u32::try_from(block_size).is_err() {
         return Err(invalid("--block-size exceeds u32"));
@@ -212,6 +183,8 @@ fn parse_options() -> io::Result<Option<Options>> {
         block_size,
         merge_fan_in,
         keep_intermediate,
+        threads,
+        merge_threads,
     }))
 }
 

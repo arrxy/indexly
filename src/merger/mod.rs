@@ -1,3 +1,6 @@
+mod parallel;
+pub(crate) use parallel::{merge_all, MAX_OPEN_INPUTS};
+
 /*
 Merges sorted binary runs into one globally sorted binary file.
 
