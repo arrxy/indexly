@@ -46,4 +46,14 @@ impl IndexBuilder {
         }
         doc_len
     }
+
+    pub fn postings_count(&self) -> usize {
+        self.postings.len()
+    }
+
+    pub fn flush_to_file(&mut self, file_path: &str) -> std::io::Result<()> {
+        crate::indexer::writer::write_run(file_path, &mut self.postings)?;
+        self.postings.clear();
+        Ok(())
+    }
 }
