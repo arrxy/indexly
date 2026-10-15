@@ -1,6 +1,8 @@
 mod index;
 mod indexer;
 mod tokenizer;
+mod merger;
+
 use std::io;
 
 fn main() -> io::Result<()> {
@@ -15,6 +17,28 @@ fn main() -> io::Result<()> {
         }
 
         return indexer::inspect_run(&args[2]);
+    }
+
+    if args.get(1).map(String::as_str) == Some("--merge") {
+        if args.len() < 4 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Usage: search-engine --merge <output_file> <run_file>...",
+            ));
+        }
+
+        let paths: Vec<std::path::PathBuf> = args[3..]
+            .iter()
+            .map(std::path::PathBuf::from)
+            .collect();
+
+        let count = merger::merge_runs(
+            &paths,
+            std::path::Path::new(&args[2]),
+        )?;
+
+        println!("Merged {count} postings.");
+        return Ok(());
     }
 
     if args.len() < 3 || args.len() > 4 {
@@ -33,6 +57,7 @@ fn main() -> io::Result<()> {
             io::Error::new(io::ErrorKind::InvalidInput, error)
         })?
         .unwrap_or(64 * 1024);
+
     let runs = indexer::build_runs(
         &args[1],
         &args[2],
