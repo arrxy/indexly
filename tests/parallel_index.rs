@@ -177,3 +177,52 @@ fn input_errors_and_invalid_worker_options_terminate_with_errors() {
     let help = String::from_utf8_lossy(&help.stdout);
     assert!(help.contains("--threads") && help.contains("--merge-threads"));
 }
+
+#[test]
+fn final_merge_streams_without_creating_an_uncompressed_final_run() {
+    let root = TestDir::new("fused-final-merge");
+    let input = root.0.join("input.tsv");
+    fs::write(&input, "100\tRust makes search fast.\n205\tRust rust powers search.\n310\tSearch finds documents, documents.\n415\tCafé search supports naïve users.\n520\tRUST, search! Rust?\n").unwrap();
+    let mut outputs = Vec::new();
+    for fan_in in ["128", "2"] {
+        let output = root.0.join(format!("fan-in-{fan_in}"));
+        let result = run(&[
+            input.to_str().unwrap(),
+            "--output",
+            output.to_str().unwrap(),
+            "--batch-bytes",
+            "1",
+            "--block-size",
+            "2",
+            "--merge-fan-in",
+            fan_in,
+            "--merge-threads",
+            "2",
+            "--keep-intermediate",
+        ]);
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&result.stdout)
+                .contains("Final merge + compression: 17 postings, 11 terms")
+        );
+        let work = output.join("_work");
+        let directories = fs::read_dir(&work)
+            .unwrap()
+            .filter(|entry| entry.as_ref().unwrap().path().is_dir())
+            .count();
+        // 5 inputs fit fan-in 128. For fan-in 2, preparation stops at 2 inputs.
+        assert_eq!(directories, if fan_in == "128" { 0 } else { 2 });
+        assert!(!work.join("merged.bin").exists());
+        outputs.push(output);
+    }
+    for file in ["postings.bin", "lexicon.bin", "page_table.bin"] {
+        assert_eq!(
+            fs::read(outputs[0].join(file)).unwrap(),
+            fs::read(outputs[1].join(file)).unwrap()
+        );
+    }
+}

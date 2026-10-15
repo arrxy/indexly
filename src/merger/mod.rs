@@ -1,15 +1,11 @@
 mod parallel;
-pub(crate) use parallel::{merge_all, MAX_OPEN_INPUTS};
+pub(crate) use parallel::{MAX_OPEN_INPUTS, prepare_runs};
 
 /*
-Merges sorted binary runs into one globally sorted binary file.
-
-Each run is ordered by (term, doc_id). A min-heap holds one posting
-per active run. After writing a posting, only its source is advanced.
-
-The output uses the same uncompressed record format as the input runs.
+Traverse sorted binary runs with a min-heap. merge_into() emits postings
+to a callback. merge_runs() uses it to write intermediate binary runs.
+The final pass uses it to write compressed posting blocks directly.
 */
-
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::fs::File;
@@ -18,7 +14,16 @@ use std::path::{Path, PathBuf};
 
 use crate::indexer::read_next_posting;
 
-pub fn merge_runs(run_paths: &[PathBuf], output_path: &Path) -> io::Result<u64> {
+pub fn merge_into<F>(run_paths: &[PathBuf], mut emit: F) -> io::Result<u64>
+where
+    F: FnMut(&str, u32, u32) -> io::Result<()>,
+{
+    if run_paths.len() > MAX_OPEN_INPUTS {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Prepare runs before merging more than 128 inputs",
+        ));
+    }
     let mut readers = run_paths
         .iter()
         .map(|path| File::open(path).map(BufReader::new))
@@ -26,24 +31,18 @@ pub fn merge_runs(run_paths: &[PathBuf], output_path: &Path) -> io::Result<u64> 
     let mut heap: BinaryHeap<Reverse<(String, u32, usize, u32)>> = BinaryHeap::new();
     for (run_id, reader) in readers.iter_mut().enumerate() {
         if let Some(posting) = read_next_posting(reader)? {
-            heap.push(Reverse((posting.term, posting.doc_id, run_id, posting.term_frequency)));
+            heap.push(Reverse((
+                posting.term,
+                posting.doc_id,
+                run_id,
+                posting.term_frequency,
+            )));
         }
     }
-    let mut output = BufWriter::new(File::create(output_path)?);
-    let mut posting_count = 0_u64;
+    let mut count = 0;
     while let Some(Reverse((term, doc_id, run_id, frequency))) = heap.pop() {
-        let term_bytes = term.as_bytes();
-
-        let term_length = u32::try_from(term_bytes.len()).map_err(|_| {
-            io::Error::new(io::ErrorKind::InvalidData, "Term too long")
-        })?;
-
-        output.write_all(&term_length.to_le_bytes())?;
-        output.write_all(term_bytes)?;
-        output.write_all(&doc_id.to_le_bytes())?;
-        output.write_all(&frequency.to_le_bytes())?;
-        posting_count += 1;
-
+        emit(&term, doc_id, frequency)?;
+        count += 1;
         if let Some(posting) = read_next_posting(&mut readers[run_id])? {
             heap.push(Reverse((
                 posting.term,
@@ -53,7 +52,67 @@ pub fn merge_runs(run_paths: &[PathBuf], output_path: &Path) -> io::Result<u64> 
             )));
         }
     }
+    Ok(count)
+}
 
+pub fn merge_runs(run_paths: &[PathBuf], output_path: &Path) -> io::Result<u64> {
+    let mut output = BufWriter::new(File::create(output_path)?);
+    let count = merge_into(run_paths, |term, doc_id, frequency| {
+        let bytes = term.as_bytes();
+        let length = u32::try_from(bytes.len())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Term too long"))?;
+        output.write_all(&length.to_le_bytes())?;
+        output.write_all(bytes)?;
+        output.write_all(&doc_id.to_le_bytes())?;
+        output.write_all(&frequency.to_le_bytes())
+    })?;
     output.flush()?;
-    Ok(posting_count)
+    Ok(count)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn sink_errors_and_truncated_input_propagate_without_deleting_sources() {
+        let root = std::env::temp_dir().join(format!(
+            "merge-sink-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let source = root.join("run.bin");
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&4_u32.to_le_bytes());
+        bytes.extend_from_slice(b"rust");
+        bytes.extend_from_slice(&0_u32.to_le_bytes());
+        bytes.extend_from_slice(&1_u32.to_le_bytes());
+        std::fs::write(&source, &bytes).unwrap();
+        let mut calls = 0;
+        let result = merge_into(&[source.clone()], |_, _, _| {
+            calls += 1;
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "sink failed",
+            ))
+        });
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(calls, 1);
+        assert_eq!(std::fs::read(&source).unwrap(), bytes);
+        std::fs::write(&source, &bytes[..bytes.len() - 1]).unwrap();
+        let result = merge_into(&[source], |_, _, _| {
+            panic!("Truncated posting must not be emitted")
+        });
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::UnexpectedEof);
+        assert_eq!(
+            merge_into(&[], |_, _, _| panic!("Empty inputs must emit nothing")).unwrap(),
+            0
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

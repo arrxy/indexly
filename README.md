@@ -66,7 +66,21 @@ cmp ./output/serial_01/lexicon.bin ./output/build_parallel_01/lexicon.bin
 cmp ./output/serial_01/page_table.bin ./output/build_parallel_01/page_table.bin
 ```
 
-The program prints build, merge, compression, and total elapsed times.
+## Streaming final merge
+
+Intermediate passes run only while the number of runs exceeds
+`--merge-fan-in`. Once the remaining runs fit, the final heap traversal
+passes each posting directly to `PostingsWriter::push`. `finish` writes
+the last block and lexicon entry and flushes both output files.
+
+There is no final uncompressed `merged.bin` write/read cycle. Even with
+`--keep-intermediate`, only source runs and necessary intermediate merge
+outputs are retained. Temporary inputs are cleaned up after the compressed
+writer finishes successfully.
+
+The program prints build, intermediate merge, final merge + compression,
+and total elapsed times. Compare the new combined final-stage time with
+the old final merge **plus** compression times, rather than either alone.
 `/usr/bin/time -l` additionally reports CPU time and peak resident memory on
 macOS. Filesystem caching and competing disk I/O can affect measurements.
 Compression remains sequential in this version.

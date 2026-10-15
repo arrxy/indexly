@@ -100,28 +100,32 @@ fn main() -> io::Result<()> {
         .collect();
 
     let stage = Instant::now();
-    let merged = merger::merge_all(
+    let runs = merger::prepare_runs(
         runs,
         &work,
         options.merge_fan_in,
         options.merge_threads,
         options.keep_intermediate,
     )?;
-    println!("Merge: {:.2}s", stage.elapsed().as_secs_f64());
+    println!(
+        "Intermediate merges: {} runs ready in {:.2}s",
+        runs.len(),
+        stage.elapsed().as_secs_f64()
+    );
 
     let stage = Instant::now();
-    let term_count = indexer::write_index(
-        &merged,
-        &options.output,
-        options.block_size,
-        &compression::Simple9,
-    )?;
+    let codec = compression::Simple9;
+    let mut writer = indexer::PostingsWriter::new(&options.output, options.block_size, &codec)?;
+    let posting_count = merger::merge_into(&runs, |term, doc_id, frequency| {
+        writer.push(term, doc_id, frequency)
+    })?;
+    let term_count = writer.finish()?;
     fs::copy(
         work.join("page_table.bin"),
         options.output.join("page_table.bin"),
     )?;
     println!(
-        "Compress: {term_count} terms in {:.2}s",
+        "Final merge + compression: {posting_count} postings, {term_count} terms in {:.2}s",
         stage.elapsed().as_secs_f64()
     );
 
