@@ -226,3 +226,85 @@ fn final_merge_streams_without_creating_an_uncompressed_final_run() {
         );
     }
 }
+
+#[cfg(not(feature = "gpu-sort"))]
+#[test]
+fn gpu_sort_requires_feature_and_invalid_sort_options_do_not_create_outputs() {
+    let root = TestDir::new("sort-options");
+    let input = root.0.join("input.tsv");
+    fs::write(&input, "7\trust search\n").unwrap();
+    for mode in ["gpu", "invalid"] {
+        let output = root.0.join(mode);
+        let result = run(&[
+            input.to_str().unwrap(),
+            "--output",
+            output.to_str().unwrap(),
+            "--sort",
+            mode,
+        ]);
+        assert!(!result.status.success());
+        assert!(!output.exists());
+        if mode == "gpu" {
+            assert!(String::from_utf8_lossy(&result.stderr).contains("--features gpu-sort"));
+        }
+    }
+}
+
+#[cfg(feature = "gpu-sort")]
+#[test]
+#[ignore = "Requires a hardware Metal GPU; run with --features gpu-sort -- --ignored"]
+fn gpu_sorted_runs_produce_identical_final_index_with_multiple_workers() {
+    let root = TestDir::new("gpu-equivalence");
+    let input = root.0.join("input.tsv");
+    let contents: String = (0..640)
+        .map(|i| {
+            let text = if i % 31 == 0 {
+                String::new()
+            } else {
+                format!("Rust rust Café naïve 東京 term{}", i % 53)
+            };
+            format!("{}\t{text}\n", i * 11 + 7)
+        })
+        .collect();
+    fs::write(&input, contents).unwrap();
+    let mut outputs = Vec::new();
+    for (mode, threads) in [("cpu", "1"), ("gpu", "1"), ("gpu", "4")] {
+        let output = root.0.join(format!("{mode}-{threads}"));
+        let result = run(&[
+            input.to_str().unwrap(),
+            "--output",
+            output.to_str().unwrap(),
+            "--sort",
+            mode,
+            "--threads",
+            threads,
+            "--batch-bytes",
+            "4096",
+            "--merge-fan-in",
+            "3",
+            "--block-size",
+            "2",
+        ]);
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        if mode == "gpu" {
+            assert!(String::from_utf8_lossy(&result.stdout).contains("via Metal, radix sort"));
+            assert!(String::from_utf8_lossy(&result.stdout).contains("Sort GPU:"));
+            assert!(
+                String::from_utf8_lossy(&result.stdout)
+                    .contains("writer follows sorted indices (no posting reorder)")
+            );
+        }
+        assert!(!output.join("_work").exists());
+        outputs.push(output);
+    }
+    for name in ["postings.bin", "lexicon.bin", "page_table.bin"] {
+        let expected = fs::read(outputs[0].join(name)).unwrap();
+        for output in &outputs[1..] {
+            assert_eq!(expected, fs::read(output.join(name)).unwrap(), "{name}");
+        }
+    }
+}
