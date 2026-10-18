@@ -141,6 +141,22 @@ fn main() -> io::Result<()> {
         work.join("page_table.bin"),
         options.output.join("page_table.bin"),
     )?;
+    {
+        let page_table = index::PageTable::load(
+            options.output.join("page_table.bin"),
+        )?;
+
+        let stats = index::CollectionStats::from_page_table(&page_table);
+
+        stats.save(options.output.join("metadata.bin"))?;
+
+        println!(
+            "Metadata: {} documents, {} indexed tokens, average length {:.2}",
+            stats.document_count,
+            stats.total_doc_length,
+            stats.average_doc_length(),
+        );
+    }
     println!(
         "Final merge + compression: {posting_count} postings, {term_count} terms in {:.2}s",
         stage.elapsed().as_secs_f64()

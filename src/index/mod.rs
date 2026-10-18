@@ -1,8 +1,11 @@
 mod lexicon;
 mod inverted_index;
 mod page_table;
+mod metadata;
 
 pub(crate) use lexicon::Lexicon;
+pub use metadata::CollectionStats;
+pub(crate) use page_table::PageTable;
 
 /*
     This module contains the data structures for the search engine's inverted index.
