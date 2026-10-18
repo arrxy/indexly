@@ -2,11 +2,12 @@
 name = "search-engine"
 version = "0.1.0"
 edition = "2024"
+default-run = "search-engine"
 
 [dependencies]
 
 [features]
-default = []
+default = ["gpu-sort"]
 gpu-sort = ["dep:wgpu", "dep:bytemuck"]
 
 [dependencies.wgpu]

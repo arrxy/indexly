@@ -1,6 +1,6 @@
 mod parallel;
-pub(crate) mod sorting;
-pub(crate) use parallel::build_runs_parallel;
+pub mod sorting;
+pub use parallel::build_runs_parallel;
 
 mod builder;
 mod postings_writer;
@@ -8,7 +8,7 @@ mod reader;
 mod run_reader;
 mod writer;
 
-pub(crate) use postings_writer::{PostingsWriter, write_index};
+pub use postings_writer::{PostingsWriter, write_index};
 pub(crate) use run_reader::read_next_posting;
 
 use crate::tokenizer::Tokenizer;

@@ -54,6 +54,8 @@ fn build(input: &Path, output: &Path, threads: &str, merge_threads: &str) {
         input.to_str().unwrap(),
         "--output",
         output.to_str().unwrap(),
+        "--sort",
+        "cpu",
         "--batch-bytes",
         "512",
         "--block-size",
@@ -101,14 +103,23 @@ fn parallel_build_and_merge_match_serial_bytes_and_page_order() {
     fs::write(&input, text).unwrap();
     let serial = root.0.join("serial");
     build(&input, &serial, "1", "1");
-    assert_eq!(
-        fs::read(serial.join("page_table.bin")).unwrap(),
-        expected_pages
-    );
+    let table = search_engine::index::PageTable::load(serial.join("page_table.bin")).unwrap();
+    let mut actual_pages = Vec::new();
+    for entry in &table.entries {
+        actual_pages.extend_from_slice(&entry.passage_id.to_le_bytes());
+        actual_pages.extend_from_slice(&entry.doc_length.to_le_bytes());
+    }
+    assert_eq!(actual_pages, expected_pages);
+    assert!(table.source.is_some());
     for (threads, merge_threads) in [("4", "1"), ("1", "3"), ("4", "3")] {
         let parallel = root.0.join(format!("parallel-{threads}-{merge_threads}"));
         build(&input, &parallel, threads, merge_threads);
-        for name in ["postings.bin", "lexicon.bin", "page_table.bin"] {
+        for name in [
+            "postings.bin",
+            "lexicon.bin",
+            "page_table.bin",
+            "blocks.bin",
+        ] {
             assert_eq!(
                 fs::read(serial.join(name)).unwrap(),
                 fs::read(parallel.join(name)).unwrap(),
@@ -128,7 +139,12 @@ fn empty_collections_and_documents_without_tokens_match_serial() {
         let parallel = root.0.join(format!("{name}-parallel"));
         build(&input, &serial, "1", "1");
         build(&input, &parallel, "4", "2");
-        for file in ["postings.bin", "lexicon.bin", "page_table.bin"] {
+        for file in [
+            "postings.bin",
+            "lexicon.bin",
+            "page_table.bin",
+            "blocks.bin",
+        ] {
             assert_eq!(
                 fs::read(serial.join(file)).unwrap(),
                 fs::read(parallel.join(file)).unwrap()
@@ -138,7 +154,8 @@ fn empty_collections_and_documents_without_tokens_match_serial() {
             fs::metadata(parallel.join("postings.bin")).unwrap().len(),
             9
         );
-        assert_eq!(fs::read(parallel.join("lexicon.bin")).unwrap(), b"LEX1");
+        assert_eq!(fs::read(parallel.join("lexicon.bin")).unwrap(), b"LEX2");
+        assert_eq!(fs::read(parallel.join("blocks.bin")).unwrap(), b"BLK1");
     }
 }
 
@@ -156,6 +173,8 @@ fn input_errors_and_invalid_worker_options_terminate_with_errors() {
         input.to_str().unwrap(),
         "--output",
         output.to_str().unwrap(),
+        "--sort",
+        "cpu",
         "--threads",
         "4",
         "--merge-threads",
@@ -198,6 +217,8 @@ fn final_merge_streams_without_creating_an_uncompressed_final_run() {
             fan_in,
             "--merge-threads",
             "2",
+            "--sort",
+            "cpu",
             "--keep-intermediate",
         ]);
         assert!(
@@ -219,7 +240,12 @@ fn final_merge_streams_without_creating_an_uncompressed_final_run() {
         assert!(!work.join("merged.bin").exists());
         outputs.push(output);
     }
-    for file in ["postings.bin", "lexicon.bin", "page_table.bin"] {
+    for file in [
+        "postings.bin",
+        "lexicon.bin",
+        "page_table.bin",
+        "blocks.bin",
+    ] {
         assert_eq!(
             fs::read(outputs[0].join(file)).unwrap(),
             fs::read(outputs[1].join(file)).unwrap()
@@ -301,7 +327,12 @@ fn gpu_sorted_runs_produce_identical_final_index_with_multiple_workers() {
         assert!(!output.join("_work").exists());
         outputs.push(output);
     }
-    for name in ["postings.bin", "lexicon.bin", "page_table.bin"] {
+    for name in [
+        "postings.bin",
+        "lexicon.bin",
+        "page_table.bin",
+        "blocks.bin",
+    ] {
         let expected = fs::read(outputs[0].join(name)).unwrap();
         for output in &outputs[1..] {
             assert_eq!(expected, fs::read(output.join(name)).unwrap(), "{name}");

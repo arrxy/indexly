@@ -1,5 +1,5 @@
-mod tokenizer;
 mod simple;
+mod tokenizer;
 
-pub(crate) use simple::SimpleTokenizer;
-pub(crate) use tokenizer::Tokenizer;
+pub use simple::SimpleTokenizer;
+pub use tokenizer::Tokenizer;

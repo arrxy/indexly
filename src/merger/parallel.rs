@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread;
 
 // Leave headroom for output files, stdio and other process descriptors.
-pub(crate) const MAX_OPEN_INPUTS: usize = 128;
+pub const MAX_OPEN_INPUTS: usize = 128;
 
 pub fn prepare_runs(
     mut runs: Vec<PathBuf>,

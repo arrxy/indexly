@@ -1,5 +1,6 @@
-/* Sort a posting batch before it is written as a run. CPU is the default;
-GPU sorting is opt-in and uses batch-local lexicographic numeric term IDs. */
+/* Sort a posting batch before it is written as a run. GPU is the default
+when compiled in and uses batch-local lexicographic numeric term IDs.
+CPU sorting is available through --sort cpu or a CPU-only build. */
 use std::io;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
