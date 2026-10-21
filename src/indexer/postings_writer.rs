@@ -14,6 +14,10 @@ use crate::compression::IntegerCodec;
 pub struct PostingsWriter<'a, C: IntegerCodec> {
     postings: BufWriter<File>,
     lexicon: BufWriter<File>,
+    blocks: BufWriter<File>,
+    blocks_position: u64,
+    list_blocks_start: u64,
+    block_count: u32,
     codec: &'a C,
     block_size: usize,
     position: u64,
@@ -38,14 +42,20 @@ impl<'a, C: IntegerCodec> PostingsWriter<'a, C> {
         fs::create_dir_all(output_dir)?;
         let mut postings = BufWriter::new(File::create(output_dir.join("postings.bin"))?);
         let mut lexicon = BufWriter::new(File::create(output_dir.join("lexicon.bin"))?);
+        let mut blocks = BufWriter::new(File::create(output_dir.join("blocks.bin"))?);
         postings.write_all(b"IDX1")?;
         postings.write_all(&[codec.id()])?;
         postings.write_all(&block_size_u32.to_le_bytes())?;
-        lexicon.write_all(b"LEX1")?;
+        lexicon.write_all(b"LEX2")?;
+        blocks.write_all(b"BLK1")?;
 
         Ok(Self {
             postings,
             lexicon,
+            blocks,
+            blocks_position: 4,
+            list_blocks_start: 4,
+            block_count: 0,
             codec,
             block_size,
             position: 9,
@@ -80,6 +90,8 @@ impl<'a, C: IntegerCodec> PostingsWriter<'a, C> {
             self.finish_term()?;
             self.current_term = Some(term.to_owned());
             self.list_start = self.position;
+            self.list_blocks_start = self.blocks_position;
+            self.block_count = 0;
             self.previous_doc = None;
             self.doc_freq = 0;
         }
@@ -106,16 +118,28 @@ impl<'a, C: IntegerCodec> PostingsWriter<'a, C> {
         self.finish_term()?;
         self.postings.flush()?;
         self.lexicon.flush()?;
+        self.blocks.flush()?;
         Ok(self.term_count)
     }
 
     fn flush_block(&mut self) -> io::Result<()> {
-        self.position += write_block(
+        // write_block clears the vectors, so capture this metadata first.
+        let Some(&last_doc_id) = self.doc_ids.last() else {
+            return Ok(());
+        };
+        let block_offset = self.position;
+        let written = write_block(
             &mut self.postings,
             &mut self.doc_ids,
             &mut self.frequencies,
             self.codec,
         )?;
+        // Directory records are exactly 12 bytes, independent of Rust padding.
+        self.blocks.write_all(&last_doc_id.to_le_bytes())?;
+        self.blocks.write_all(&block_offset.to_le_bytes())?;
+        self.position += written;
+        self.blocks_position += 12;
+        self.block_count += 1;
         Ok(())
     }
 
@@ -128,6 +152,8 @@ impl<'a, C: IntegerCodec> PostingsWriter<'a, C> {
                 self.list_start,
                 self.position - self.list_start,
                 self.doc_freq,
+                self.list_blocks_start,
+                self.block_count,
             )?;
             self.term_count += 1;
         }
@@ -195,12 +221,16 @@ fn write_term(
     offset: u64,
     length: u64,
     doc_freq: u32,
+    blocks_offset: u64,
+    block_count: u32,
 ) -> io::Result<()> {
     output.write_all(&to_u32(term.len())?.to_le_bytes())?;
     output.write_all(term.as_bytes())?;
     output.write_all(&offset.to_le_bytes())?;
     output.write_all(&length.to_le_bytes())?;
-    output.write_all(&doc_freq.to_le_bytes())
+    output.write_all(&doc_freq.to_le_bytes())?;
+    output.write_all(&blocks_offset.to_le_bytes())?;
+    output.write_all(&block_count.to_le_bytes())
 }
 
 fn to_u32(value: usize) -> io::Result<u32> {
@@ -302,7 +332,7 @@ mod tests {
             writer.push(term, id, frequency).unwrap();
         }
         assert_eq!(writer.finish().unwrap(), 2);
-        for name in ["postings.bin", "lexicon.bin"] {
+        for name in ["postings.bin", "lexicon.bin", "blocks.bin"] {
             assert_eq!(
                 fs::read(from_file.join(name)).unwrap(),
                 fs::read(streamed.join(name)).unwrap()

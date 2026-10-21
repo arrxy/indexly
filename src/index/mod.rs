@@ -1,11 +1,15 @@
-mod lexicon;
 mod inverted_index;
-mod page_table;
+mod lexicon;
 mod metadata;
+mod page_table;
+mod passages;
+mod postings_reader;
+pub use passages::{PassageStore, prepare_passages};
+pub use postings_reader::PostingsReader;
 
-pub(crate) use lexicon::Lexicon;
+pub use lexicon::{Lexicon, LexiconEntry};
 pub use metadata::CollectionStats;
-pub(crate) use page_table::PageTable;
+pub use page_table::{PageTable, PageTableEntry, PassageSource};
 
 /*
     This module contains the data structures for the search engine's inverted index.
@@ -84,21 +88,9 @@ pub(crate) use page_table::PageTable;
         the number of postings, and the number of bytes used to store document gaps and frequencies.
 
     3. Page Table:
-        pub struct PageTable {
-            pub file: File,
-            pub entries: Vec<PageTableEntry>,
-        }
-
-        pub struct PageTableEntry {
-            pub offset: u64,
-            pub length: u32,
-            pub doc_length: u32,
-        }
-
-        The page table maps each internal doc_id to its original passage ID.
-        For sequential doc IDs, entries[doc_id] gives that document's metadata.
-
-        Each entry's offset and length locate the original passage ID in the
-        page table file. doc_length is the number of indexed terms in the
-        passage; it is used when calculating BM25.
+        entries[internal_doc_id] contains the original passage_id,
+        doc_length (indexed token count), passage_offset and passage_length.
+        The byte offset and length locate the original TSV row for snippets.
+        Source-file information is stored once in the PTB2 header.
+        Legacy 8-byte records (passage_id, doc_length) remain readable.
 */

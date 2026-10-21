@@ -13,6 +13,8 @@ pub struct LexiconEntry {
     pub offset: u64,
     pub length: u64,
     pub doc_freq: u32,
+    pub blocks_offset: u64,
+    pub block_count: u32,
 }
 
 impl Lexicon {
@@ -24,8 +26,10 @@ impl Lexicon {
         let mut magic = [0; 4];
         reader.read_exact(&mut magic)?;
 
-        if &magic != b"LEX1" {
-            return Err(invalid("Invalid lexicon header"));
+        if &magic != b"LEX2" {
+            return Err(invalid(
+                "Expected LEX2 lexicon; rebuild older indexes to add block directories",
+            ));
         }
 
         let mut terms = HashMap::new();
@@ -39,8 +43,8 @@ impl Lexicon {
                 return Err(invalid("Empty lexicon term"));
             }
 
-            // Term bytes + offset (8) + length (8) + doc_freq (4).
-            let remaining_entry = u64::from(term_length) + 20;
+            // Term + offset (8) + length (8) + doc_freq (4) + blocks_offset (8) + block_count (4).
+            let remaining_entry = u64::from(term_length) + 32;
 
             if remaining_entry > file_size.saturating_sub(bytes_read) {
                 return Err(io::Error::new(
@@ -59,12 +63,18 @@ impl Lexicon {
                 offset: read_u64(&mut reader)?,
                 length: read_u64(&mut reader)?,
                 doc_freq: read_u32(&mut reader)?,
+                blocks_offset: read_u64(&mut reader)?,
+                block_count: read_u32(&mut reader)?,
             };
 
             bytes_read += remaining_entry;
 
             if entry.length == 0 || entry.doc_freq == 0 {
                 return Err(invalid("Empty posting list in lexicon"));
+            }
+
+            if entry.blocks_offset < 4 || entry.block_count == 0 || entry.block_count > entry.doc_freq {
+                return Err(invalid("Invalid block-directory metadata"));
             }
 
             if terms.insert(term, entry).is_some() {

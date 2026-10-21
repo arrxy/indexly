@@ -1,5 +1,5 @@
 mod parallel;
-pub(crate) use parallel::{MAX_OPEN_INPUTS, prepare_runs};
+pub use parallel::{MAX_OPEN_INPUTS, prepare_runs};
 
 /*
 Traverse sorted binary runs with a min-heap. merge_into() emits postings
