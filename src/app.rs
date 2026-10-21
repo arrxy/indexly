@@ -166,14 +166,15 @@ pub fn run_index(args: impl Iterator<Item = String>) -> io::Result<()> {
 
 fn parse_options(args: impl Iterator<Item = String>) -> io::Result<Option<Options>> {
     let mut args = args;
-    let mut dataset = None;
-    let mut output = PathBuf::from("./output/index");
-    let mut batch_bytes = 64 * 1024;
-    let mut block_size = 128;
-    let mut merge_fan_in = 64;
-    let mut keep_intermediate = false;
-    let mut threads = 1;
-    let mut merge_threads = 1;
+    let mut dataset = None; // To store the dataset path provided by the user
+    let mut output = PathBuf::from("./output/index"); // Default output directory
+    let mut batch_bytes = 64 * 1024 * 1024; // Batch bytes is the approximate-serialized size of postings the
+    // builder buffers before writing them as a temporary sorted run. Default batch size in bytes (64 MB)
+    let mut block_size = 128; // how many postings the index writer groups into one compressed block
+    let mut merge_fan_in = 64; // Merge fan-in is the maximum number of sorted temporary run files the program merges together in one pass.
+    let mut keep_intermediate = false; // creates a Boolean setting that controls whether temporary files are kept after indexing.
+    let mut threads = 8; // Number of threads to use for indexing
+    let mut merge_threads = 2; // Number of threads to use for merging
     let mut sort = String::from(if cfg!(feature = "gpu-sort") {
         "gpu"
     } else {
@@ -204,14 +205,17 @@ fn parse_options(args: impl Iterator<Item = String>) -> io::Result<Option<Option
     }
 
     if sort != "cpu" && sort != "gpu" {
-        return Err(invalid("--sort must be cpu or gpu"));
+        println!("--sort must be cpu or gpu, setting to default");
+        sort = String::from("cpu");
     }
     let dataset = dataset.ok_or_else(|| invalid(HELP))?;
     if !(2..=merger::MAX_OPEN_INPUTS).contains(&merge_fan_in) {
-        return Err(invalid("--merge-fan-in must be between 2 and 128"));
+        println!("--merge-fan-in must be between 2 and 128, setting to default");
+        merge_fan_in = 64;
     }
     if u32::try_from(block_size).is_err() {
-        return Err(invalid("--block-size exceeds u32"));
+        println!("--block-size exceeds u32, setting to default");
+        block_size = 128;
     }
 
     Ok(Some(Options {

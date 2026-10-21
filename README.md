@@ -185,19 +185,23 @@ default, and both `search-engine` and `build_runs` select GPU sorting when
 
 For a CPU-only executable without GPU dependencies, build with
 `cargo build --release --no-default-features`; that build defaults to CPU.
-The GPU backend uses wgpu and WGSL compute shaders through Metal. An
-unavailable GPU produces an error before creating the output directory; there is no silent CPU fallback.
+The GPU backend uses the published [metal-radix](https://crates.io/crates/metal-radix)
+0.1 crate, which owns the wgpu/Metal implementation and bundled WGSL shader.
+The optional dependency is enabled by `gpu-sort`; no local checkout of the crate
+is needed. An unavailable GPU produces an error before creating the output
+directory; there is no silent CPU fallback.
 
 Each build worker counts frequencies as before. When its batch is ready:
 
 1. The CPU collects unique terms and sorts that vocabulary lexicographically.
-2. It assigns **batch-local numeric term IDs** in that order and prepares
-   `(term_id, doc_id, original_posting_index)` records.
+2. It assigns **batch-local numeric term IDs** in that order and passes
+   `[term_id, doc_id]` key pairs to `metal_radix::GpuSorter::sort_indices`.
+   The crate attaches original input indices to its packed GPU records.
 3. The GPU runs a stable radix sort: document-ID nibbles first, then term-ID
    nibbles. GPU workgroups sort local tiles, scan bucket counts, and scatter
    records into global order.
-4. The CPU validates the returned ordering and permutation. The run writer
-   follows the sorted original posting indices directly, reading the original
+4. The crate validates the returned ordering and permutation on the CPU. The run
+   writer follows the sorted original posting indices directly, reading the original
    terms, document IDs, and frequencies without rearranging the posting vector.
    It writes the existing binary run format.
 
@@ -206,17 +210,17 @@ The saved runs still contain term strings; the merger and compressed index
 format are unchanged. Strings, tokenization, term-frequency counting, file
 I/O, merging and compression remain on the CPU.
 
-All build workers share one GPU context. CPU dictionary preparation can
-run concurrently, but GPU sort submissions are serialized to bound GPU
-buffer memory. `--threads 8` still means eight CPU build workers. GPU code
-uses additional numeric arrays and staging buffers; `--batch-bytes` is not
+All build workers share one `metal-radix` sorter. CPU dictionary preparation can
+run concurrently. The search-engine adapter serializes calls to the crate to
+measure queue-wait time separately and bound packed GPU-buffer memory.
+`--threads 8` still means eight CPU build workers. GPU code uses additional numeric arrays and staging buffers; `--batch-bytes` is not
 a total memory budget. Oversized batches return an error asking for a smaller
 threshold rather than exceeding device buffer/dispatch limits.
 
 The log reports the adapter, startup time, and aggregate worker times for
-term-ID preparation, waiting for the GPU context, GPU submission/readback/
-validation. GPU mode no longer has a CPU posting-reordering step. These
-durations can overlap with other workers and **must not be added to estimate
+term-ID preparation, waiting for the shared sorter, and the crate's key packing,
+GPU submission/readback/validation. GPU mode no longer has a CPU posting-reordering
+step. These durations can overlap with other workers and **must not be added to estimate
 wall time**. GPU time includes host work and readback, not just kernel execution. Total time includes GPU initialization.
 The required CPU vocabulary sorting, memory traffic, and synchronization may
 outweigh any GPU sorting benefit; this mode is an experiment to measure.
