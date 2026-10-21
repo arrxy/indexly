@@ -23,12 +23,11 @@ pub enum PostingOrder {
 pub trait PostingSorter: Sync {
     fn sort(&self, postings: &mut [IntermediatePosting]) -> io::Result<PostingOrder>;
     fn description(&self) -> &str;
-    fn report(&self);
 }
 
 pub fn create_sorter(mode: &str) -> io::Result<Box<dyn PostingSorter>> {
     match mode {
-        "cpu" => Ok(Box::new(CpuSorter::default())),
+        "cpu" => Ok(Box::new(CpuSorter)),
         #[cfg(feature = "gpu-sort")]
         "gpu" => Ok(Box::new(gpu::GpuSorter::new()?)),
         #[cfg(not(feature = "gpu-sort"))]
