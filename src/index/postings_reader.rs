@@ -42,10 +42,16 @@ impl<C: IntegerCodec> PostingsReader<C> {
             return Err(invalid("Invalid postings header or codec"));
         }
         let block_size = u32::from_le_bytes(header[5..].try_into().unwrap());
-        let list_end = entry.offset.checked_add(entry.length).ok_or_else(
-            || invalid("Posting-list range overflows")
-        )?;
-        if block_size == 0 || entry.doc_freq == 0 || entry.length == 0 || entry.offset < 9 || list_end > file_size {
+        let list_end = entry
+            .offset
+            .checked_add(entry.length)
+            .ok_or_else(|| invalid("Posting-list range overflows"))?;
+        if block_size == 0
+            || entry.doc_freq == 0
+            || entry.length == 0
+            || entry.offset < 9
+            || list_end > file_size
+        {
             return Err(invalid("Invalid posting-list metadata"));
         }
         // All blocks except the final block are full in this writer's format.

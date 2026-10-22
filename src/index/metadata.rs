@@ -1,8 +1,8 @@
+use crate::index::page_table::PageTable;
 use std::fs::File;
 use std::io;
 use std::io::{Read, Write};
 use std::path::Path;
-use crate::index::page_table::PageTable;
 
 pub struct CollectionStats {
     pub document_count: u64,
@@ -15,7 +15,11 @@ impl CollectionStats {
     pub fn from_page_table(table: &PageTable) -> Self {
         Self {
             document_count: table.entries.len() as u64,
-            total_doc_length: table.entries.iter().map(|entry| entry.doc_length as u64).sum(),
+            total_doc_length: table
+                .entries
+                .iter()
+                .map(|entry| entry.doc_length as u64)
+                .sum(),
             tokenizer_id: 1,
             tokenizer_version: 1,
         }
@@ -42,15 +46,20 @@ impl CollectionStats {
         let mut file = File::open(path)?;
 
         if file.metadata()?.len() != 28 {
-            return Err(io::Error::new(io::ErrorKind::InvalidData,
-                                      "Collection metadata must contain exactly 28 bytes"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Collection metadata must contain exactly 28 bytes",
+            ));
         }
 
         let mut bytes = [0_u8; 28];
         file.read_exact(&mut bytes)?;
 
         if &bytes[..4] != b"STA1" {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Unsupported collection metadata format"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Unsupported collection metadata format",
+            ));
         }
 
         Ok(Self {

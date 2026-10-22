@@ -1,9 +1,9 @@
-use std::fs::File;
 use crate::index::lexicon::Lexicon;
+use std::fs::File;
 
 pub struct InvertedIndex {
     pub lexicon: Lexicon,
-    pub postings_file: File
+    pub postings_file: File,
 }
 struct DecodedBlock {
     doc_ids: Vec<u32>,

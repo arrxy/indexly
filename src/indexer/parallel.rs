@@ -5,7 +5,8 @@ Page records are written at doc_id * 8, so completion order cannot
 change the mapping between internal doc IDs and original passage IDs.
 */
 use std::fs::{self, File};
-use std::io::{self, Seek, SeekFrom, Write};
+use std::io::ErrorKind::InvalidInput;
+use std::io::{self, Error, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
@@ -27,8 +28,8 @@ pub fn build_runs_parallel<T: Tokenizer + Sync>(
     sorter: &dyn PostingSorter,
 ) -> io::Result<usize> {
     if workers == 0 || max_batch_bytes == 0 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
+        return Err(Error::new(
+            InvalidInput,
             "Workers and batch bytes must be positive",
         ));
     }
@@ -98,17 +99,17 @@ fn send_batches(
     let mut bytes = 0;
     for (number, passage) in reader::read_passages_from_file(input_path)?.enumerate() {
         if cancelled.load(Ordering::Relaxed) {
-            return Err(io::Error::other("Run construction cancelled"));
+            return Err(Error::other("Run construction cancelled"));
         }
         let (passage_id, text) = passage?;
         let doc_id = u32::try_from(number)
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Too many documents"))?;
+            .map_err(|_| Error::new(io::ErrorKind::InvalidData, "Too many documents"))?;
         bytes += text.len() + 8;
         batch.push((doc_id, passage_id, text));
         if bytes >= WORK_BYTES || batch.len() >= WORK_DOCUMENTS {
             sender
                 .send(std::mem::take(&mut batch))
-                .map_err(|_| io::Error::other("Index workers stopped"))?;
+                .map_err(|_| Error::other("Index workers stopped"))?;
             bytes = 0;
         }
     }
@@ -117,7 +118,7 @@ fn send_batches(
             .send(batch)
             .map_err(|_| io::Error::other("Index workers stopped"))?;
     }
-    Ok(()) // Dropping sender lets idle workers finish.
+    Ok(())
 }
 
 fn run_worker<T: Tokenizer>(
@@ -135,7 +136,7 @@ fn run_worker<T: Tokenizer>(
         let batch = {
             let receiver = receiver
                 .lock()
-                .map_err(|_| io::Error::other("Work queue poisoned"))?;
+                .map_err(|_| Error::other("Work queue poisoned"))?;
             receiver.recv()
         };
         let Ok(batch) = batch else { break };
@@ -143,7 +144,7 @@ fn run_worker<T: Tokenizer>(
             break;
         }
         let first_id = batch[0].0;
-        let mut metadata = Vec::with_capacity(batch.len() * 8);
+        let mut metadata: Vec<u8> = Vec::with_capacity(batch.len() * 8);
         for (doc_id, passage_id, text) in batch {
             let doc_length = builder.add_document(doc_id, tokenizer.tokenize(&text));
             metadata.extend_from_slice(&passage_id.to_le_bytes());
@@ -152,10 +153,9 @@ fn run_worker<T: Tokenizer>(
                 flush_run(&mut builder, output, run_count, sorter)?;
             }
         }
-        // One lock and one contiguous write per input batch, not per term.
         let mut page = page_table
             .lock()
-            .map_err(|_| io::Error::other("Page table poisoned"))?;
+            .map_err(|_| Error::other("Page table poisoned"))?;
         page.seek(SeekFrom::Start(u64::from(first_id) * 8))?;
         page.write_all(&metadata)?;
     }
@@ -175,7 +175,7 @@ fn flush_run(
     let path = output.join(format!("run_{number:04}.bin"));
     let path = path
         .to_str()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Output path must be UTF-8"))?;
+        .ok_or_else(|| Error::new(InvalidInput, "Output path must be UTF-8"))?;
     builder.flush_to_file(path, sorter)
 }
 

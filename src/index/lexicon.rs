@@ -73,7 +73,10 @@ impl Lexicon {
                 return Err(invalid("Empty posting list in lexicon"));
             }
 
-            if entry.blocks_offset < 4 || entry.block_count == 0 || entry.block_count > entry.doc_freq {
+            if entry.blocks_offset < 4
+                || entry.block_count == 0
+                || entry.block_count > entry.doc_freq
+            {
                 return Err(invalid("Invalid block-directory metadata"));
             }
 

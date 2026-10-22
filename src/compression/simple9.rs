@@ -1,5 +1,5 @@
-use std::io;
 use super::IntegerCodec;
+use std::io;
 pub struct Simple9;
 
 const MODES: [(usize, u32); 9] = [
@@ -67,10 +67,7 @@ impl IntegerCodec for Simple9 {
             let word = u32::from_le_bytes(chunk.try_into().unwrap());
             let selector = (word >> 28) as usize;
             let &(capacity, bits) = MODES.get(selector).ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "Invalid Simple9 selector",
-                )
+                io::Error::new(io::ErrorKind::InvalidData, "Invalid Simple9 selector")
             })?;
             let count = capacity.min(value_count - output.len());
             let mask = (1_u32 << bits) - 1;

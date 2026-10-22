@@ -1,7 +1,6 @@
+use super::builder::IntermediatePosting;
 use std::io;
 use std::io::{BufRead, Read};
-use super::builder::IntermediatePosting;
-
 
 fn read_u32(reader: &mut impl Read) -> std::io::Result<u32> {
     let mut bytes = [0; 4];
