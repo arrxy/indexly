@@ -424,7 +424,7 @@ fn bm25_validates_parameters_and_known_term_contributions() {
 }
 
 #[test]
-fn incompatible_metadata_and_missing_source_fail_with_actionable_errors() {
+fn missing_source_supports_override_and_tokenizer_metadata_is_trusted() {
     let root = TestDir::new();
     let (input, index, _) = fixture(&root);
     let moved = root.0.join("moved.tsv");
@@ -444,5 +444,13 @@ fn incompatible_metadata_and_missing_source_fail_with_actionable_errors() {
     let mut bytes = fs::read(&metadata).unwrap();
     bytes[20..24].copy_from_slice(&99_u32.to_le_bytes());
     fs::write(&metadata, bytes).unwrap();
-    assert!(SearchEngine::open(&index, None, false, 1.2, 0.75).is_err());
+    // The index is trusted; tokenizer identity is not revalidated at startup.
+    let mut trusted = SearchEngine::open(&index, None, false, 1.2, 0.75).unwrap();
+    assert!(
+        !trusted
+            .search("rust", QueryMode::Disjunctive)
+            .unwrap()
+            .hits
+            .is_empty()
+    );
 }

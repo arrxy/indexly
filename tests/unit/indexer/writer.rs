@@ -81,26 +81,3 @@ fn indexed_writer_matches_cpu_bytes_without_moving_postings() {
     assert_eq!(fs::metadata(empty_path).unwrap().len(), 0);
     fs::remove_dir_all(root).unwrap();
 }
-
-#[test]
-fn invalid_index_count_and_out_of_bounds_return_errors() {
-    let root = temp_dir();
-    let mut postings = vec![IntermediatePosting {
-        term: "rust".into(),
-        doc_id: 0,
-        term_frequency: 1,
-    }];
-    for (label, indices) in [("short", vec![]), ("out-of-bounds", vec![1])] {
-        let path = root.join(label);
-        let result = write_run(
-            path.to_str().unwrap(),
-            &mut postings,
-            &IndexedSorter(indices),
-        );
-        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
-        if label == "short" {
-            assert!(!path.exists());
-        }
-    }
-    fs::remove_dir_all(root).unwrap();
-}

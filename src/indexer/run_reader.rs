@@ -1,12 +1,7 @@
 use super::builder::IntermediatePosting;
+use crate::binary::read_u32;
 use std::io;
-use std::io::{BufRead, Read};
-
-fn read_u32(reader: &mut impl Read) -> std::io::Result<u32> {
-    let mut bytes = [0; 4];
-    reader.read_exact(&mut bytes)?;
-    Ok(u32::from_le_bytes(bytes))
-}
+use std::io::BufRead;
 
 pub fn read_next_posting(reader: &mut impl BufRead) -> io::Result<Option<IntermediatePosting>> {
     if reader.fill_buf()?.is_empty() {

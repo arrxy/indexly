@@ -98,23 +98,3 @@ fn streamed_and_file_based_writer_match() {
     }
     fs::remove_dir_all(root).unwrap();
 }
-
-#[test]
-fn invalid_posting_order_and_zero_frequency_are_rejected() {
-    let root = temp_dir("invalid");
-    let cases = [
-        vec![("z", 0, 1), ("a", 1, 1)],
-        vec![("a", 1, 1), ("a", 1, 1)],
-        vec![("a", 2, 1), ("a", 1, 1)],
-        vec![("a", 0, 0)],
-        vec![("", 0, 1)],
-    ];
-    for (number, records) in cases.into_iter().enumerate() {
-        let mut writer = PostingsWriter::new(&root.join(number.to_string()), 2, &Simple9).unwrap();
-        let result: io::Result<()> = records
-            .into_iter()
-            .try_for_each(|(term, id, frequency)| writer.push(term, id, frequency));
-        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
-    }
-    fs::remove_dir_all(root).unwrap();
-}

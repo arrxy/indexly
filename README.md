@@ -65,8 +65,12 @@ The upgrade checks document count and original IDs, preserves token counts,
 and replaces the page table atomically only after success. Legacy page
 tables still work for ranking with `--no-snippets`. If the identical TSV
 moves, specify `search --index <directory> --dataset <new-path>`.
-Startup checks index counts and tokenizer identity; source-size/mtime
-mismatches produce errors rather than silently displaying incorrect text.
+The reader trusts indexes produced by this pipeline: it does not recheck
+posting order, frequencies, directory boundaries, or tokenizer identity.
+Source modification times are not checked; use the same TSV that built the index.
+File I/O, format headers, decoding, and passage IDs are still checked.
+Writers require sorted, unique postings with positive frequencies and lengths
+that fit the existing u32 fields. Sorters must return a valid permutation.
 
 ### Separate assignment stages
 

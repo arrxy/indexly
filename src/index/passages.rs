@@ -1,3 +1,4 @@
+use crate::binary::invalid;
 /* Add text offsets to a completed page table in one sequential TSV scan.
 The original TSV remains the text store. Only the top-ranked passages are
 read at query time; no passage text or positions are added to postings. */
@@ -103,7 +104,6 @@ pub fn prepare_passages(
 
 pub struct PassageStore {
     reader: BufReader<File>,
-    file_size: u64,
 }
 impl PassageStore {
     pub fn open(table: &PageTable, dataset_override: Option<&Path>) -> io::Result<Self> {
@@ -118,39 +118,12 @@ impl PassageStore {
                 ),
             )
         })?;
-        let metadata = file.metadata()?;
-        if metadata.len() != source.file_size {
-            return Err(invalid(
-                "Passage source size differs from the indexed dataset",
-            ));
-        }
-        if dataset_override.is_none() {
-            let modified = metadata
-                .modified()?
-                .duration_since(UNIX_EPOCH)
-                .map_err(|_| invalid("Invalid passage source time"))?;
-            if modified.as_secs() != source.modified_secs
-                || modified.subsec_nanos() != source.modified_nanos
-            {
-                return Err(invalid(
-                    "Passage source changed; regenerate offsets with prepare-snippets",
-                ));
-            }
-        }
         Ok(Self {
             reader: BufReader::new(file),
-            file_size: metadata.len(),
         })
     }
 
     pub fn text(&mut self, entry: &PageTableEntry) -> io::Result<String> {
-        if entry
-            .passage_offset
-            .checked_add(u64::from(entry.passage_length))
-            .is_none_or(|end| end > self.file_size)
-        {
-            return Err(invalid("Passage outside source file"));
-        }
         self.reader.seek(SeekFrom::Start(entry.passage_offset))?;
         let mut row = vec![0; entry.passage_length as usize];
         self.reader.read_exact(&mut row)?;
@@ -165,7 +138,4 @@ impl PassageStore {
         }
         Ok(text.to_owned())
     }
-}
-fn invalid(message: &str) -> io::Error {
-    io::Error::new(io::ErrorKind::InvalidData, message)
 }

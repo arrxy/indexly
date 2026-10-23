@@ -1,3 +1,4 @@
+use crate::binary::{invalid, read_u32, read_u64};
 /* PTB2 stores source-file information and one 20-byte record per document:
 passage_id:u32, doc_length:u32, passage_offset:u64, passage_length:u32 (LE).
 Legacy 8-byte page tables remain readable and can be upgraded for snippets. */
@@ -99,18 +100,4 @@ impl PageTable {
     pub fn get(&self, doc_id: u32) -> Option<&PageTableEntry> {
         self.entries.get(doc_id as usize)
     }
-}
-
-fn read_u32(reader: &mut impl Read) -> io::Result<u32> {
-    let mut b = [0; 4];
-    reader.read_exact(&mut b)?;
-    Ok(u32::from_le_bytes(b))
-}
-fn read_u64(reader: &mut impl Read) -> io::Result<u64> {
-    let mut b = [0; 8];
-    reader.read_exact(&mut b)?;
-    Ok(u64::from_le_bytes(b))
-}
-fn invalid(message: &str) -> io::Error {
-    io::Error::new(io::ErrorKind::InvalidData, message)
 }

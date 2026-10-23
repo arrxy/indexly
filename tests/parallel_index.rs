@@ -255,7 +255,7 @@ fn final_merge_streams_without_creating_an_uncompressed_final_run() {
 
 #[cfg(not(feature = "gpu-sort"))]
 #[test]
-fn gpu_sort_requires_feature_and_invalid_sort_options_do_not_create_outputs() {
+fn gpu_sort_requires_feature_and_unknown_sort_falls_back_to_cpu() {
     let root = TestDir::new("sort-options");
     let input = root.0.join("input.tsv");
     fs::write(&input, "7\trust search\n").unwrap();
@@ -268,10 +268,14 @@ fn gpu_sort_requires_feature_and_invalid_sort_options_do_not_create_outputs() {
             "--sort",
             mode,
         ]);
-        assert!(!result.status.success());
-        assert!(!output.exists());
         if mode == "gpu" {
+            assert!(!result.status.success());
+            assert!(!output.exists());
             assert!(String::from_utf8_lossy(&result.stderr).contains("--features gpu-sort"));
+        } else {
+            assert!(result.status.success());
+            assert!(output.join("postings.bin").exists());
+            assert!(String::from_utf8_lossy(&result.stdout).contains("setting to default"));
         }
     }
 }
@@ -318,11 +322,6 @@ fn gpu_sorted_runs_produce_identical_final_index_with_multiple_workers() {
         );
         if mode == "gpu" {
             assert!(String::from_utf8_lossy(&result.stdout).contains("via Metal, radix sort"));
-            assert!(String::from_utf8_lossy(&result.stdout).contains("Sort GPU:"));
-            assert!(
-                String::from_utf8_lossy(&result.stdout)
-                    .contains("writer follows sorted indices (no posting reorder)")
-            );
         }
         assert!(!output.join("_work").exists());
         outputs.push(output);

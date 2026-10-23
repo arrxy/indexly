@@ -23,7 +23,6 @@ pub struct PostingsWriter<'a, C: IntegerCodec> {
     position: u64,
     list_start: u64,
     current_term: Option<String>,
-    previous_doc: Option<u32>,
     doc_freq: u32,
     term_count: u64,
     doc_ids: Vec<u32>,
@@ -32,7 +31,8 @@ pub struct PostingsWriter<'a, C: IntegerCodec> {
 
 impl<'a, C: IntegerCodec> PostingsWriter<'a, C> {
     pub fn new(output_dir: &Path, block_size: usize, codec: &'a C) -> io::Result<Self> {
-        let block_size_u32 = to_u32(block_size)?;
+        let block_size_u32 = u32::try_from(block_size)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "Block size exceeds u32"))?;
         if block_size == 0 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -61,7 +61,6 @@ impl<'a, C: IntegerCodec> PostingsWriter<'a, C> {
             position: 9,
             list_start: 9,
             current_term: None,
-            previous_doc: None,
             doc_freq: 0,
             term_count: 0,
             doc_ids: Vec::with_capacity(block_size),
@@ -69,44 +68,19 @@ impl<'a, C: IntegerCodec> PostingsWriter<'a, C> {
         })
     }
 
+    /// Accepts sorted, unique postings with nonempty terms and positive frequencies.
     pub fn push(&mut self, term: &str, doc_id: u32, frequency: u32) -> io::Result<()> {
-        if term.is_empty() || frequency == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Term must be nonempty and frequency positive",
-            ));
-        }
-        if self
-            .current_term
-            .as_deref()
-            .is_some_and(|current| term < current)
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Terms are not sorted",
-            ));
-        }
         if self.current_term.as_deref() != Some(term) {
             self.finish_term()?;
             self.current_term = Some(term.to_owned());
             self.list_start = self.position;
             self.list_blocks_start = self.blocks_position;
             self.block_count = 0;
-            self.previous_doc = None;
             self.doc_freq = 0;
         }
-        if self.previous_doc.is_some_and(|previous| doc_id <= previous) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Doc IDs must strictly increase within a term",
-            ));
-        }
-        self.previous_doc = Some(doc_id);
         self.doc_ids.push(doc_id);
         self.frequencies.push(frequency);
-        self.doc_freq = self.doc_freq.checked_add(1).ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidData, "Document frequency exceeds u32")
-        })?;
+        self.doc_freq += 1;
         if self.doc_ids.len() == self.block_size {
             self.flush_block()?;
         }
@@ -123,38 +97,49 @@ impl<'a, C: IntegerCodec> PostingsWriter<'a, C> {
     }
 
     fn flush_block(&mut self) -> io::Result<()> {
-        // write_block clears the vectors, so capture this metadata first.
-        let Some(&last_doc_id) = self.doc_ids.last() else {
+        let Some(&last) = self.doc_ids.last() else {
             return Ok(());
         };
-        let block_offset = self.position;
-        let written = write_block(
-            &mut self.postings,
-            &mut self.doc_ids,
-            &mut self.frequencies,
-            self.codec,
-        )?;
-        // Directory records are exactly 12 bytes, independent of Rust padding.
-        self.blocks.write_all(&last_doc_id.to_le_bytes())?;
-        self.blocks.write_all(&block_offset.to_le_bytes())?;
-        self.position += written;
+        let gaps: Vec<_> = self
+            .doc_ids
+            .windows(2)
+            .map(|pair| pair[1] - pair[0])
+            .collect();
+        let gaps = self.codec.encode(&gaps)?;
+        let frequencies = self.codec.encode(&self.frequencies)?;
+        for value in [
+            self.doc_ids[0],
+            last,
+            self.doc_ids.len() as u32,
+            gaps.len() as u32,
+            frequencies.len() as u32,
+        ] {
+            self.postings.write_all(&value.to_le_bytes())?;
+        }
+        self.postings.write_all(&gaps)?;
+        self.postings.write_all(&frequencies)?;
+        self.blocks.write_all(&last.to_le_bytes())?;
+        self.blocks.write_all(&self.position.to_le_bytes())?;
+        self.position += 20 + gaps.len() as u64 + frequencies.len() as u64;
         self.blocks_position += 12;
         self.block_count += 1;
+        self.doc_ids.clear();
+        self.frequencies.clear();
         Ok(())
     }
 
     fn finish_term(&mut self) -> io::Result<()> {
         if let Some(term) = self.current_term.take() {
             self.flush_block()?;
-            write_term(
-                &mut self.lexicon,
-                &term,
-                self.list_start,
-                self.position - self.list_start,
-                self.doc_freq,
-                self.list_blocks_start,
-                self.block_count,
-            )?;
+            self.lexicon.write_all(&(term.len() as u32).to_le_bytes())?;
+            self.lexicon.write_all(term.as_bytes())?;
+            self.lexicon.write_all(&self.list_start.to_le_bytes())?;
+            self.lexicon
+                .write_all(&(self.position - self.list_start).to_le_bytes())?;
+            self.lexicon.write_all(&self.doc_freq.to_le_bytes())?;
+            self.lexicon
+                .write_all(&self.list_blocks_start.to_le_bytes())?;
+            self.lexicon.write_all(&self.block_count.to_le_bytes())?;
             self.term_count += 1;
         }
         Ok(())
@@ -174,68 +159,6 @@ pub fn write_index<C: IntegerCodec>(
         writer.push(&posting.term, posting.doc_id, posting.term_frequency)?;
     }
     writer.finish()
-}
-
-fn write_block<C: IntegerCodec>(
-    output: &mut impl Write,
-    doc_ids: &mut Vec<u32>,
-    frequencies: &mut Vec<u32>,
-    codec: &C,
-) -> io::Result<u64> {
-    if doc_ids.is_empty() {
-        return Ok(0);
-    }
-
-    let gaps: Vec<u32> = doc_ids.windows(2).map(|pair| pair[1] - pair[0]).collect();
-
-    let gap_bytes = codec.encode(&gaps)?;
-    let frequency_bytes = codec.encode(frequencies)?;
-
-    // Five u32 fields: 20 bytes total.
-    let header = [
-        doc_ids[0],
-        *doc_ids.last().unwrap(),
-        to_u32(doc_ids.len())?,
-        to_u32(gap_bytes.len())?,
-        to_u32(frequency_bytes.len())?,
-    ];
-
-    for value in header {
-        output.write_all(&value.to_le_bytes())?;
-    }
-
-    output.write_all(&gap_bytes)?;
-    output.write_all(&frequency_bytes)?;
-
-    let written = 20 + gap_bytes.len() as u64 + frequency_bytes.len() as u64;
-
-    doc_ids.clear();
-    frequencies.clear();
-
-    Ok(written)
-}
-
-fn write_term(
-    output: &mut impl Write,
-    term: &str,
-    offset: u64,
-    length: u64,
-    doc_freq: u32,
-    blocks_offset: u64,
-    block_count: u32,
-) -> io::Result<()> {
-    output.write_all(&to_u32(term.len())?.to_le_bytes())?;
-    output.write_all(term.as_bytes())?;
-    output.write_all(&offset.to_le_bytes())?;
-    output.write_all(&length.to_le_bytes())?;
-    output.write_all(&doc_freq.to_le_bytes())?;
-    output.write_all(&blocks_offset.to_le_bytes())?;
-    output.write_all(&block_count.to_le_bytes())
-}
-
-fn to_u32(value: usize) -> io::Result<u32> {
-    u32::try_from(value)
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "Value exceeds u32"))
 }
 
 #[cfg(test)]

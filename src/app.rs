@@ -49,24 +49,9 @@ pub fn run_index(args: impl Iterator<Item = String>) -> io::Result<()> {
     let sort_start = Instant::now();
     let sorter = indexer::sorting::create_sorter(&options.sort)?;
     let sort_init = sort_start.elapsed();
-    if let Some(parent) = options.output.parent() {
-        if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent)?;
-        }
-    }
-    fs::create_dir(&options.output).map_err(|error| {
-        if error.kind() == io::ErrorKind::AlreadyExists {
-            invalid("Output directory already exists; choose a new --output directory")
-        } else {
-            error
-        }
-    })?;
-
+    fresh_directory(&options.output)?;
     let work = options.output.join("_work");
     fs::create_dir(&work)?;
-    let work_str = work
-        .to_str()
-        .ok_or_else(|| invalid("Output path must be UTF-8"))?;
     println!(
         "Workers: build {}, merge {}; batch threshold {} bytes per build worker",
         options.threads, options.merge_threads, options.batch_bytes
@@ -80,7 +65,7 @@ pub fn run_index(args: impl Iterator<Item = String>) -> io::Result<()> {
     let stage = Instant::now();
     let run_count = indexer::build_runs_parallel(
         &options.dataset,
-        work_str,
+        utf8(&work)?,
         options.batch_bytes,
         &tokenizer::SimpleTokenizer,
         options.threads,
@@ -156,15 +141,14 @@ pub fn run_index(args: impl Iterator<Item = String>) -> io::Result<()> {
 
 fn parse_options(args: impl Iterator<Item = String>) -> io::Result<Option<Options>> {
     let mut args = args;
-    let mut dataset = None; // To store the dataset path provided by the user
-    let mut output = PathBuf::from("./output/index"); // Default output directory
-    let mut batch_bytes = 64 * 1024 * 1024; // Batch bytes is the approximate-serialized size of postings the
-    // builder buffers before writing them as a temporary sorted run. Default batch size in bytes (64 MB)
-    let mut block_size = 128; // how many postings the index writer groups into one compressed block
-    let mut merge_fan_in = 64; // Merge fan-in is the maximum number of sorted temporary run files the program merges together in one pass.
-    let mut keep_intermediate = false; // creates a Boolean setting that controls whether temporary files are kept after indexing.
-    let mut threads = 8; // Number of threads to use for indexing
-    let mut merge_threads = 2; // Number of threads to use for merging
+    let mut dataset = None;
+    let mut output = PathBuf::from("./output/index");
+    let mut batch_bytes = 64 * 1024 * 1024;
+    let mut block_size = 128;
+    let mut merge_fan_in = 64;
+    let mut keep_intermediate = false;
+    let mut threads = 8;
+    let mut merge_threads = 2;
     let mut sort = String::from(if cfg!(feature = "gpu-sort") {
         "gpu"
     } else {
@@ -298,8 +282,7 @@ pub fn run_build(args: impl Iterator<Item = String>) -> io::Result<()> {
     let source = utf8(&source)?.as_bytes();
     manifest.write_all(b"RUN1")?;
     manifest.write_all(&(runs as u64).to_le_bytes())?;
-    let length = u32::try_from(source.len()).map_err(|_| invalid("Source path too long"))?;
-    manifest.write_all(&length.to_le_bytes())?;
+    manifest.write_all(&(source.len() as u32).to_le_bytes())?;
     manifest.write_all(source)?;
     println!(
         "Wrote {runs} sorted runs in {:.2}s to {}",
@@ -332,13 +315,9 @@ pub fn run_merge(args: impl Iterator<Item = String>) -> io::Result<()> {
     }
     let count = u64::from_le_bytes(header[4..12].try_into().unwrap());
     let path_length = u32::from_le_bytes(header[12..16].try_into().unwrap()) as usize;
-    if path_length > 65536 || file.metadata()?.len() != 16 + path_length as u64 {
-        return Err(invalid("Invalid run manifest length"));
-    }
     let mut source = vec![0; path_length];
     file.read_exact(&mut source)?;
     let source = String::from_utf8(source).map_err(|_| invalid("Source path is not UTF-8"))?;
-    let count = usize::try_from(count).map_err(|_| invalid("Too many runs"))?;
     let paths: Vec<_> = (1..=count)
         .map(|n| input.join(format!("run_{n:04}.bin")))
         .collect();

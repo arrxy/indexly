@@ -114,7 +114,7 @@ fn directory_records_and_galloping_cursor_match_written_postings() {
 }
 
 #[test]
-fn malformed_directory_and_wrong_block_headers_are_rejected() {
+fn truncated_directory_and_legacy_lexicon_are_rejected() {
     let root = temp_dir();
     let codec = Simple9;
     let mut writer = PostingsWriter::new(&root, 2, &codec).unwrap();
@@ -127,16 +127,6 @@ fn malformed_directory_and_wrong_block_headers_are_rejected() {
     let bytes = fs::read(root.join("blocks.bin")).unwrap();
     fs::write(root.join("blocks.bin"), &bytes[..bytes.len() - 1]).unwrap();
     assert!(PostingsReader::open(&root, entry, Simple9).is_err());
-    let mut bad = bytes.clone();
-    bad[16..20].copy_from_slice(&0u32.to_le_bytes());
-    fs::write(root.join("blocks.bin"), &bad).unwrap();
-    assert!(PostingsReader::open(&root, entry, Simple9).is_err());
-    fs::write(root.join("blocks.bin"), &bytes).unwrap();
-    let mut data = fs::read(root.join("postings.bin")).unwrap();
-    data[13..17].copy_from_slice(&999u32.to_le_bytes()); // First block's last ID.
-    fs::write(root.join("postings.bin"), &data).unwrap();
-    let mut r = PostingsReader::open(&root, entry, Simple9).unwrap();
-    assert!(r.next_geq(0).is_err());
     fs::write(root.join("legacy.bin"), b"LEX1").unwrap();
     assert!(Lexicon::load(root.join("legacy.bin")).is_err());
     fs::remove_dir_all(root).unwrap();

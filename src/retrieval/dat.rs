@@ -13,8 +13,8 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QueryMode {
-    Conjunctive,
-    Disjunctive,
+    Conjunctive, // AND
+    Disjunctive, // OR
 }
 impl QueryMode {
     pub fn parse(value: &str) -> io::Result<Self> {
@@ -99,46 +99,8 @@ impl SearchEngine {
     ) -> io::Result<Self> {
         let index_dir = index_dir.as_ref().to_owned();
         let stats = CollectionStats::load(index_dir.join("metadata.bin"))?;
-        if stats.tokenizer_id != 1 || stats.tokenizer_version != 1 {
-            return Err(invalid(
-                "Unsupported index tokenizer; query normalization must match indexing",
-            ));
-        }
         let page_table = PageTable::load(index_dir.join("page_table.bin"))?;
-        if page_table.entries.len() as u64 != stats.document_count {
-            return Err(invalid(
-                "Page-table document count differs from collection metadata",
-            ));
-        }
-        let total: u64 = page_table
-            .entries
-            .iter()
-            .map(|e| u64::from(e.doc_length))
-            .sum();
-        if total != stats.total_doc_length {
-            return Err(invalid(
-                "Page-table token count differs from collection metadata",
-            ));
-        }
         let lexicon = Lexicon::load(index_dir.join("lexicon.bin"))?;
-        // Validate even an empty index before entering the query loop.
-        for (name, magic) in [("postings.bin", b"IDX1"), ("blocks.bin", b"BLK1")] {
-            use std::io::Read;
-            let mut header = [0; 4];
-            std::fs::File::open(index_dir.join(name))?.read_exact(&mut header)?;
-            if &header != magic {
-                return Err(invalid("Unsupported postings or block-directory header"));
-            }
-        }
-        if lexicon
-            .terms
-            .values()
-            .any(|e| u64::from(e.doc_freq) > stats.document_count)
-        {
-            return Err(invalid(
-                "Term document frequency exceeds collection document count",
-            ));
-        }
         let passages = if snippets {
             Some(PassageStore::open(&page_table, dataset)?)
         } else {
@@ -169,20 +131,11 @@ impl SearchEngine {
             .into_iter()
             .filter(|t| seen.insert(t.clone()))
             .collect();
-        if terms.len() > 64 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "Queries may contain at most 64 distinct terms",
-            ));
-        }
         let mut result = SearchResult {
             terms,
             hits: Vec::new(),
             matched_documents: 0,
         };
-        if result.terms.is_empty() {
-            return Ok(result);
-        }
         let mut cursors = Vec::new();
         let mut idfs = vec![0.0; result.terms.len()];
         for (term_index, term) in result.terms.iter().enumerate() {
@@ -220,12 +173,9 @@ impl SearchEngine {
                 }
                 frequencies.fill(0);
                 for cursor in &cursors {
-                    frequencies[cursor.term_index] = cursor
-                        .reader
-                        .frequency()
-                        .ok_or_else(|| invalid("Posting cursor has no frequency"))?;
+                    frequencies[cursor.term_index] = cursor.reader.frequency().unwrap();
                 }
-                self.consider(target, &result.terms, &idfs, &frequencies, &mut heap)?;
+                self.consider(target, &result.terms, &idfs, &frequencies, &mut heap);
                 result.matched_documents += 1;
                 let Some(next) = target.checked_add(1) else {
                     break;
@@ -240,13 +190,10 @@ impl SearchEngine {
                 frequencies.fill(0);
                 for cursor in &cursors {
                     if cursor.current == Some(doc_id) {
-                        frequencies[cursor.term_index] = cursor
-                            .reader
-                            .frequency()
-                            .ok_or_else(|| invalid("Posting cursor has no frequency"))?;
+                        frequencies[cursor.term_index] = cursor.reader.frequency().unwrap();
                     }
                 }
-                self.consider(doc_id, &result.terms, &idfs, &frequencies, &mut heap)?;
+                self.consider(doc_id, &result.terms, &idfs, &frequencies, &mut heap);
                 result.matched_documents += 1;
                 for cursor in &mut cursors {
                     if cursor.current == Some(doc_id) {
@@ -264,10 +211,7 @@ impl SearchEngine {
             .sort_by(|a, b| b.score.total_cmp(&a.score).then(a.doc_id.cmp(&b.doc_id)));
         if let Some(passages) = &mut self.passages {
             for hit in &mut result.hits {
-                let entry = self
-                    .page_table
-                    .get(hit.doc_id)
-                    .ok_or_else(|| invalid("Result document is outside page table"))?;
+                let entry = &self.page_table.entries[hit.doc_id as usize];
                 hit.snippet = snippet::generate(&passages.text(entry)?, &result.terms);
             }
         }
@@ -281,14 +225,9 @@ impl SearchEngine {
         idfs: &[f64],
         frequencies: &[u32],
         heap: &mut BinaryHeap<SearchHit>,
-    ) -> io::Result<()> {
-        let entry = self
-            .page_table
-            .get(doc_id)
-            .ok_or_else(|| invalid("Posting document ID is outside page table"))?;
-        if frequencies.iter().any(|&tf| tf > entry.doc_length) {
-            return Err(invalid("Term frequency exceeds document length"));
-        }
+    ) {
+        let entry = &self.page_table.entries[doc_id as usize];
+
         let score: f64 = frequencies
             .iter()
             .zip(idfs)
@@ -299,7 +238,7 @@ impl SearchEngine {
                 score < worst.score || (score == worst.score && doc_id >= worst.doc_id)
             })
         {
-            return Ok(());
+            return;
         }
         let term_scores = terms
             .iter()
@@ -321,9 +260,5 @@ impl SearchEngine {
         if heap.len() > 10 {
             heap.pop();
         }
-        Ok(())
     }
-}
-fn invalid(message: &str) -> io::Error {
-    io::Error::new(io::ErrorKind::InvalidData, message)
 }
