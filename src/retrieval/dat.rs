@@ -229,9 +229,10 @@ impl SearchEngine {
             .sort_by(|a, b| b.score.total_cmp(&a.score).then(a.doc_id.cmp(&b.doc_id)));
         // Defer source reads and snippet generation until only the top ten remain.
         if let Some(passages) = &mut self.passages {
+            let generator = snippet::SnippetGenerator::new(&result.terms);
             for hit in &mut result.hits {
                 let entry = &self.page_table.entries[hit.doc_id as usize];
-                hit.snippet = snippet::generate(&passages.text(entry)?, &result.terms);
+                hit.snippet = generator.generate(&passages.text(entry)?);
             }
         }
         Ok(result)

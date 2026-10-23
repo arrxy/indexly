@@ -81,7 +81,11 @@ time. The dictionary and page table remain resident in memory.
 
 BM25 uses `ln(1 + (N - df + 0.5)/(df + 0.5))`, with defaults `k1=1.2`
 and `b=0.75`. All matching candidates are evaluated; there is no score-bound
-pruning. Snippets read source text only for the final hits.
+pruning. Snippets read source text only for the final hits. The `aho-corasick` crate
+matches normalized whole tokens. A fixed 240-character window around the first
+match provides context, with up to 60 characters before it. Matches are bracketed
+in their original spelling. There is no custom window-ranking algorithm; terms
+farther from the first hit may be omitted from the preview.
 
 The reader trusts indexes produced together by this pipeline. It does not
 revalidate posting order, directory boundaries, tokenizer identity, or source

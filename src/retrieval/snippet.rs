@@ -1,95 +1,69 @@
-//! Choose a query-dependent text window and bracket matching whole tokens.
-//! Prefer more distinct query terms, then more total matches, then earlier text.
-//! Token matching follows the indexer's alphanumeric/Unicode-lowercase rules;
-//! all byte slices use character boundaries. Only retained search hits need snippets.
+//! Aho-Corasick finds query terms; a fixed window around the first hit supplies context.
+//! Whole-token Unicode normalization follows indexing; brackets preserve source spelling.
 
-use std::collections::HashMap;
+use aho_corasick::{AhoCorasick, MatchKind};
 
 const WINDOW: usize = 240;
-/// Return a window of up to 240 Unicode scalar values with matching tokens bracketed.
-/// Ellipses indicate omitted context; with no match, use the start of the passage.
-/// `terms` must already contain distinct, normalized query tokens.
-pub fn generate(text: &str, terms: &[String]) -> String {
-    let text: String = text
-        .chars()
-        .map(|c| if c.is_control() { ' ' } else { c })
-        .collect();
-    // Translate character positions to UTF-8 byte offsets before slicing text.
-    let mut boundaries: Vec<_> = text.char_indices().map(|(i, _)| i).collect();
-    boundaries.push(text.len());
-    let chars = boundaries.len() - 1;
-    let term_ids: HashMap<&str, usize> = terms
-        .iter()
-        .enumerate()
-        .map(|(i, t)| (t.as_str(), i))
-        .collect();
-    let mut matches = Vec::new();
-    let mut start = None;
-    // A synthetic separator flushes a final token without a special end-of-text branch.
-    for (offset, ch) in text
-        .char_indices()
-        .chain(std::iter::once((text.len(), ' ')))
-    {
-        if ch.is_alphanumeric() {
-            start.get_or_insert(offset);
-        } else if let Some(begin) = start.take() {
-            if let Some(&id) = term_ids.get(text[begin..offset].to_lowercase().as_str()) {
-                matches.push((begin, offset, id));
-            }
+const CONTEXT: usize = 60;
+
+/// Build once per query and reuse for the retained passages.
+pub struct SnippetGenerator {
+    matcher: AhoCorasick,
+}
+
+impl SnippetGenerator {
+    pub fn new(terms: &[String]) -> Self {
+        Self {
+            matcher: AhoCorasick::builder()
+                .match_kind(MatchKind::LeftmostLongest)
+                .build(terms.iter().filter(|term| !term.is_empty()))
+                .unwrap(),
         }
     }
-    let mut best = (0, 0, 0); // distinct terms, total hits, character start
-    for &(begin, end, _) in &matches {
-        let begin_char = boundaries.binary_search(&begin).unwrap();
-        let end_char = boundaries.binary_search(&end).unwrap();
-        // A match can sit at either edge of the best window. Considering
-        // those edges as well as its center avoids missing separated terms.
-        for candidate in [
-            begin_char,
-            end_char.saturating_sub(WINDOW),
-            ((begin_char + end_char) / 2).saturating_sub(WINDOW / 2),
-        ] {
-            let window_start = candidate.min(chars.saturating_sub(WINDOW));
-            let low = boundaries[window_start];
-            let high = boundaries[(window_start + WINDOW).min(chars)];
-            let mut present = vec![false; terms.len()];
-            let mut hits = 0;
-            for &(a, b, id) in &matches {
-                if a >= low && b <= high {
-                    present[id] = true;
-                    hits += 1;
-                }
-            }
-            let distinct = present.iter().filter(|&&v| v).count();
-            if (distinct, hits) > (best.0, best.1)
-                || ((distinct, hits) == (best.0, best.1) && window_start < best.2)
+
+    /// Show up to 240 characters around the first matching token, or the text's start.
+    pub fn generate(&self, text: &str) -> String {
+        let text = text.replace(|c: char| c.is_control(), " ");
+        let mut matches = Vec::new();
+        let mut offset = 0;
+        for piece in text.split_inclusive(|c: char| !c.is_alphanumeric()) {
+            let token = piece.trim_end_matches(|c: char| !c.is_alphanumeric());
+            let normalized = token.to_lowercase();
+            if self
+                .matcher
+                .find(&normalized)
+                .is_some_and(|m| m.range() == (0..normalized.len()))
             {
-                best = (distinct, hits, window_start);
+                matches.push((offset, offset + token.len()));
+            }
+            offset += piece.len();
+        }
+        let first = matches.first().map_or(0, |&(begin, _)| begin);
+        let low = text[..first]
+            .char_indices()
+            .rev()
+            .nth(CONTEXT - 1)
+            .map_or(0, |(i, _)| i);
+        let high = text[low..]
+            .char_indices()
+            .nth(WINDOW)
+            .map_or(text.len(), |(i, _)| low + i);
+        let mut result = text[low..high].to_owned();
+        // Insert from right to left so earlier match offsets remain valid.
+        for (begin, end) in matches.into_iter().rev() {
+            if begin >= low && end <= high {
+                result.insert(end - low, ']');
+                result.insert(begin - low, '[');
             }
         }
-    }
-    // Highlight in the original spelling; normalization was only used for matching.
-    let low = boundaries[best.2];
-    let high = boundaries[(best.2 + WINDOW).min(chars)];
-    let mut result = String::new();
-    if low > 0 {
-        result.push_str("... ");
-    }
-    let mut position = low;
-    for &(begin, end, _) in &matches {
-        if begin >= low && end <= high {
-            result.push_str(&text[position..begin]);
-            result.push('[');
-            result.push_str(&text[begin..end]);
-            result.push(']');
-            position = end;
+        if low > 0 {
+            result.insert_str(0, "... ");
         }
+        if high < text.len() {
+            result.push_str(" ...");
+        }
+        result.trim().to_owned()
     }
-    result.push_str(&text[position..high]);
-    if high < text.len() {
-        result.push_str(" ...");
-    }
-    result.trim().to_owned()
 }
 
 #[cfg(test)]

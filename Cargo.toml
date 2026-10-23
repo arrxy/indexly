@@ -5,6 +5,7 @@ edition = "2024"
 default-run = "search-engine"
 
 [dependencies]
+aho-corasick = "1.1"
 metal-radix = { version = "0.1.0", optional = true }
 
 [features]
