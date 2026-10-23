@@ -225,8 +225,8 @@ fn process_handles_queries_mode_changes_errors_and_eof_without_restart() {
     fs::write(&input, "80\trust search\n10\trust rust\n500\tsearch\n").unwrap();
     build(&input, &index);
     let output = success(execute(
-        env!("CARGO_BIN_EXE_search"),
-        &["--index", index.to_str().unwrap()],
+        env!("CARGO_BIN_EXE_search-engine"),
+        &["search", "--index", index.to_str().unwrap()],
         "rust search\n/mode and\nrust search\n/mode xor\nunknownzz\n/mode or\nrust search\n/help\n/quit\nignored\n",
     ));
     assert_eq!(output.matches("Query:").count(), 4);
@@ -313,68 +313,27 @@ fn legacy_page_table_upgrade_preserves_fields_and_handles_byte_offsets() {
 }
 
 #[test]
-fn separate_build_merge_and_search_executables_produce_the_same_index() {
+fn complete_build_creates_only_final_files_and_supports_query() {
     let root = TestDir::new();
-    let (input, combined, _) = fixture(&root);
-    let runs = root.0.join("runs");
-    let separate = root.0.join("separate");
-    success(execute(
-        env!("CARGO_BIN_EXE_build_runs"),
-        &[
-            input.to_str().unwrap(),
-            "--output",
-            runs.to_str().unwrap(),
-            "--sort",
-            "cpu",
-            "--threads",
-            "2",
-            "--batch-bytes",
-            "96",
-        ],
-        "",
-    ));
-    let original_runs: Vec<_> = fs::read_dir(&runs)
+    let (_, index, _) = fixture(&root);
+    let mut files: Vec<_> = fs::read_dir(&index)
         .unwrap()
-        .map(|e| {
-            let p = e.unwrap().path();
-            (p.clone(), fs::read(p).unwrap())
-        })
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
         .collect();
-    success(execute(
-        env!("CARGO_BIN_EXE_merge_index"),
-        &[
-            runs.to_str().unwrap(),
-            "--output",
-            separate.to_str().unwrap(),
-            "--block-size",
-            "2",
-            "--merge-fan-in",
-            "3",
-            "--merge-threads",
-            "2",
-        ],
-        "",
-    ));
-    for name in [
-        "postings.bin",
-        "blocks.bin",
-        "lexicon.bin",
-        "page_table.bin",
-        "metadata.bin",
-    ] {
-        assert_eq!(
-            fs::read(combined.join(name)).unwrap(),
-            fs::read(separate.join(name)).unwrap(),
-            "{name}"
-        );
-    }
-    assert_eq!(fs::read_dir(&separate).unwrap().count(), 5);
-    for (p, bytes) in original_runs {
-        assert_eq!(fs::read(p).unwrap(), bytes);
-    }
+    files.sort();
+    assert_eq!(
+        files,
+        [
+            "blocks.bin",
+            "lexicon.bin",
+            "metadata.bin",
+            "page_table.bin",
+            "postings.bin"
+        ]
+    );
     let output = success(execute(
-        env!("CARGO_BIN_EXE_search"),
-        &["--index", separate.to_str().unwrap()],
+        env!("CARGO_BIN_EXE_search-engine"),
+        &["search", "--index", index.to_str().unwrap()],
         "rust search\n/quit\n",
     ));
     assert!(output.contains("showing 10 results"));

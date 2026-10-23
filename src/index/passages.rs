@@ -117,7 +117,7 @@ impl PassageStore {
     /// Open the recorded TSV, or an identical copy moved to `dataset_override`.
     /// The caller must keep its contents unchanged; modification times are not checked.
     pub fn open(table: &PageTable, dataset_override: Option<&Path>) -> io::Result<Self> {
-        let source=table.source.as_ref().ok_or_else(||invalid("Page table has no passage offsets. Run prepare-snippets with the index and TSV first."))?;
+        let source=table.source.as_ref().ok_or_else(||invalid("Page table has no passage offsets. Rebuild the index from the TSV to enable snippets."))?;
         let path = dataset_override.unwrap_or(&source.path);
         let file = File::open(path).map_err(|e| {
             io::Error::new(

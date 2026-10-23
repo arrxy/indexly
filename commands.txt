@@ -1,0 +1,3 @@
+./target/release/search-engine data/data_set.tsv --output output/<index_name>
+
+./target/release/search-engine search --index output/<index_name>
