@@ -1,5 +1,7 @@
-/* Reduce runs to the fan-in limit with parallel intermediate merges.
-The remaining runs are consumed directly by the final compressed writer. */
+//! Reduce run count with parallel merge passes until the final merge fits fan-in.
+//! The application streams the remaining runs into the compressed writer rather
+//! than creating one more uncompressed file.
+
 use super::merge_runs;
 use std::fs;
 use std::io;
@@ -10,6 +12,7 @@ use std::thread;
 // Leave headroom for output files, stdio and other process descriptors.
 pub const MAX_OPEN_INPUTS: usize = 128;
 
+/// Merge until at most fan_in runs remain; preserve inputs when keep_intermediate is true.
 pub fn prepare_runs(
     mut runs: Vec<PathBuf>,
     work: &Path,
@@ -30,6 +33,7 @@ pub fn prepare_runs(
         let directory = work.join(format!("pass_{pass:03}"));
         fs::create_dir(&directory)?;
         let groups: Vec<_> = runs.chunks(fan_in).collect();
+        // Carry singleton groups forward unchanged instead of copying them to a new file.
         let next: Vec<_> = groups
             .iter()
             .enumerate()
@@ -41,6 +45,7 @@ pub fn prepare_runs(
                 }
             })
             .collect();
+        // Each active merge opens fan_in inputs; cap concurrency by the shared file budget.
         let active_workers = workers.min(groups.len()).min(MAX_OPEN_INPUTS / fan_in);
         let next_group = AtomicUsize::new(0);
         let cancelled = AtomicBool::new(false);
@@ -50,6 +55,7 @@ pub fn prepare_runs(
             for _ in 0..active_workers {
                 handles.push(scope.spawn(|| -> io::Result<()> {
                     while !cancelled.load(Ordering::Relaxed) {
+                        // Claim each group once without holding a lock during its disk I/O.
                         let number = next_group.fetch_add(1, Ordering::Relaxed);
                         let Some(group) = groups.get(number) else {
                             break;
@@ -57,6 +63,7 @@ pub fn prepare_runs(
                         if group.len() == 1 {
                             continue;
                         }
+                        // Delete a group's inputs only after its replacement has been flushed.
                         let result = merge_runs(group, &next[number]).and_then(|_| {
                             if !keep_intermediate {
                                 for input in *group {

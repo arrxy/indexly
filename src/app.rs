@@ -1,3 +1,7 @@
+//! Command-line orchestration for the complete index build and its separate stages.
+//! The heavy work lives in `indexer`, `merger`, and `index`; this module selects
+//! options, connects stages, records metadata, and cleans up successful builds.
+
 use crate::{compression, index, indexer, merger, tokenizer};
 use std::fs;
 use std::io;
@@ -33,6 +37,7 @@ struct Options {
     sort: String,
 }
 
+/// Build runs, merge/compress them, then prepare source offsets and corpus metadata.
 pub fn run_index(args: impl Iterator<Item = String>) -> io::Result<()> {
     let Some(options) = parse_options(args)? else {
         return Ok(());
@@ -75,6 +80,7 @@ pub fn run_index(args: impl Iterator<Item = String>) -> io::Result<()> {
         "Build: {run_count} runs in {:.2}s",
         stage.elapsed().as_secs_f64()
     );
+    // Enumerate only runs produced in this build, excluding stale or unrelated files.
     let runs: Vec<PathBuf> = (1..=run_count)
         .map(|number| work.join(format!("run_{number:04}.bin")))
         .collect();
@@ -94,6 +100,7 @@ pub fn run_index(args: impl Iterator<Item = String>) -> io::Result<()> {
     );
 
     let stage = Instant::now();
+    // Fuse the final merge with compression to avoid writing/reading a full merged run.
     let codec = compression::Simple9;
     let mut writer = indexer::PostingsWriter::new(&options.output, options.block_size, &codec)?;
     let posting_count = merger::merge_into(&runs, |term, doc_id, frequency| {
@@ -109,6 +116,7 @@ pub fn run_index(args: impl Iterator<Item = String>) -> io::Result<()> {
         stage.elapsed().as_secs_f64()
     );
     let stage = Instant::now();
+    // The page table still has legacy records; enrich them with byte offsets for snippets.
     let documents = index::prepare_passages(&options.output, &options.dataset)?;
     println!(
         "Passage offsets: {documents} documents in {:.2}s",
@@ -225,6 +233,7 @@ fn invalid(message: impl Into<String>) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, message.into())
 }
 
+/// Upgrade an existing page table for snippets without rebuilding its posting lists.
 pub fn run_prepare(mut args: impl Iterator<Item = String>) -> io::Result<()> {
     let mut index_dir = None;
     let mut dataset = None;
@@ -252,8 +261,7 @@ pub fn run_prepare(mut args: impl Iterator<Item = String>) -> io::Result<()> {
     Ok(())
 }
 
-// Stage 1 executable: all intermediate postings and the source manifest go
-// to disk so stage 2 can run in a separate process.
+/// Persist stage 1 outputs so merging can run later in a separate process.
 pub fn run_build(args: impl Iterator<Item = String>) -> io::Result<()> {
     let args: Vec<_> = args.collect();
     if args.iter().any(|a| a == "--help" || a == "-h") {
@@ -280,6 +288,7 @@ pub fn run_build(args: impl Iterator<Item = String>) -> io::Result<()> {
     use std::io::Write;
     let mut manifest = fs::File::create(options.output.join("run_manifest.bin"))?;
     let source = utf8(&source)?.as_bytes();
+    // RUN1: magic, run count:u64, source-path length:u32, then absolute UTF-8 path.
     manifest.write_all(b"RUN1")?;
     manifest.write_all(&(runs as u64).to_le_bytes())?;
     manifest.write_all(&(source.len() as u32).to_le_bytes())?;
@@ -292,8 +301,8 @@ pub fn run_build(args: impl Iterator<Item = String>) -> io::Result<()> {
     Ok(())
 }
 
-// Stage 2 consumes the manifest, merges/compresses runs, then records source
-// passage offsets. It preserves stage 1's files for inspection or another run.
+/// Consume saved runs and their source manifest to create the final index.
+/// Stage 1 inputs are preserved for inspection or another merge.
 pub fn run_merge(args: impl Iterator<Item = String>) -> io::Result<()> {
     let args: Vec<_> = args.collect();
     if args.iter().any(|a| a == "--help" || a == "-h") {
@@ -306,6 +315,7 @@ pub fn run_merge(args: impl Iterator<Item = String>) -> io::Result<()> {
         return Ok(());
     };
     use std::io::Read;
+    // The shared positional option names a run directory in this command, not a TSV.
     let input = Path::new(&options.dataset);
     let mut file = fs::File::open(input.join("run_manifest.bin"))?;
     let mut header = [0; 16];
@@ -330,6 +340,7 @@ pub fn run_merge(args: impl Iterator<Item = String>) -> io::Result<()> {
         &work,
         options.merge_fan_in,
         options.merge_threads,
+        // Preserve stage 1 sources; temporary merge outputs live under this build's _work.
         true,
     )?;
     let codec = compression::Simple9;
@@ -354,6 +365,7 @@ pub fn run_merge(args: impl Iterator<Item = String>) -> io::Result<()> {
     Ok(())
 }
 
+// Refuse an existing destination so old index files cannot mix with this build.
 fn fresh_directory(path: &Path) -> io::Result<()> {
     if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
         fs::create_dir_all(parent)?;

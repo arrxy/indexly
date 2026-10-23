@@ -1,9 +1,8 @@
-/*
-Parallel run construction. A single producer assigns doc IDs and sends
-bounded batches to workers. Each worker owns its posting buffer.
-Page records are written at doc_id * 8, so completion order cannot
-change the mapping between internal doc IDs and original passage IDs.
-*/
+//! Build runs with one input producer and independent posting buffers per worker.
+//! The producer assigns document IDs before dispatch, making them deterministic.
+//! Workers write page records at doc_id * 8, so scheduling cannot reorder them.
+//! A bounded channel limits queued input; cancellation stops work after an error.
+
 use std::fs::{self, File};
 use std::io::ErrorKind::InvalidInput;
 use std::io::{self, Error, Seek, SeekFrom, Write};
@@ -15,10 +14,13 @@ use std::thread;
 use super::{build_runs, builder::IndexBuilder, reader, sorting::PostingSorter};
 use crate::tokenizer::Tokenizer;
 
+// Dispatch granularity for input text, separate from each worker's posting-buffer limit.
 const WORK_BYTES: usize = 64 * 1024;
 const WORK_DOCUMENTS: usize = 128;
 type Batch = Vec<(u32, u32, String)>; // internal ID, passage ID, text
 
+/// Build independent sorted runs while keeping document IDs and page records deterministic.
+/// Each worker has its own batch threshold; the sorter may serialize GPU calls internally.
 pub fn build_runs_parallel<T: Tokenizer + Sync>(
     input_path: &str,
     output_path: &str,
@@ -41,6 +43,7 @@ pub fn build_runs_parallel<T: Tokenizer + Sync>(
     let output = Path::new(output_path);
     let page_table = Mutex::new(File::create(output.join("page_table.bin"))?);
     let run_count = AtomicUsize::new(0);
+    // Relaxed atomics coordinate cancellation/counts; channels and locks carry shared data.
     let cancelled = AtomicBool::new(false);
     let (sender, receiver) = mpsc::sync_channel::<Batch>(workers);
     let receiver = Arc::new(Mutex::new(receiver));
@@ -133,6 +136,7 @@ fn run_worker<T: Tokenizer>(
 ) -> io::Result<()> {
     let mut builder = IndexBuilder::new();
     while !cancelled.load(Ordering::Relaxed) {
+        // Release the receiver lock after dequeue so workers tokenize concurrently.
         let batch = {
             let receiver = receiver
                 .lock()
@@ -153,6 +157,7 @@ fn run_worker<T: Tokenizer>(
                 flush_run(&mut builder, output, run_count, sorter)?;
             }
         }
+        // Each batch owns consecutive IDs. Lock across seek + write as one operation.
         let mut page = page_table
             .lock()
             .map_err(|_| Error::other("Page table poisoned"))?;
@@ -171,6 +176,7 @@ fn flush_run(
     counter: &AtomicUsize,
     sorter: &dyn PostingSorter,
 ) -> io::Result<()> {
+    // Run numbers need only be unique; the merger restores term/document order later.
     let number = counter.fetch_add(1, Ordering::Relaxed) + 1;
     let path = output.join(format!("run_{number:04}.bin"));
     let path = path

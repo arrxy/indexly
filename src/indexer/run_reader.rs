@@ -1,8 +1,13 @@
+//! Read uncompressed run records: term_length:u32, UTF-8 term, doc_id:u32, tf:u32.
+//! Integer fields are little-endian. The merger keeps only one record per run in
+//! its heap, so it never needs to load a complete run.
+
 use super::builder::IntermediatePosting;
 use crate::binary::read_u32;
 use std::io;
 use std::io::BufRead;
 
+/// Return None only at a record boundary; incomplete records propagate I/O errors.
 pub fn read_next_posting(reader: &mut impl BufRead) -> io::Result<Option<IntermediatePosting>> {
     if reader.fill_buf()?.is_empty() {
         return Ok(None);

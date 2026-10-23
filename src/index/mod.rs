@@ -1,3 +1,8 @@
+//! Persistent index components and their query-time readers.
+//! The lexicon locates each term's postings and block directory. The page table
+//! maps internal document IDs to passage IDs, lengths, and source-text offsets.
+//! Collection statistics provide the corpus totals used by BM25.
+
 mod lexicon;
 mod metadata;
 mod page_table;

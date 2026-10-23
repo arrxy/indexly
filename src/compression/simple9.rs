@@ -1,7 +1,13 @@
+//! Simple9 packs small unsigned integers into little-endian 32-bit words.
+//! The high four bits select a packing mode; the low 28 bits hold its values.
+//! An external value count distinguishes real values from final-word padding.
+
 use super::IntegerCodec;
 use std::io;
+/// Stateless codec for values below 2^28, including zero.
 pub struct Simple9;
 
+// (values per word, bits per value), ordered from densest packing to widest values.
 const MODES: [(usize, u32); 9] = [
     (28, 1),
     (14, 2),
@@ -24,12 +30,14 @@ impl IntegerCodec for Simple9 {
         let mut position = 0;
         while position < values.len() {
             let mut packed = false;
+            // Greedily use the first mode that fits this prefix; the tail may be partial.
             for (selector, &(capacity, bits)) in MODES.iter().enumerate() {
                 let count = capacity.min(values.len() - position);
                 let group = &values[position..position + count];
                 if group.iter().any(|&value| value >= (1_u32 << bits)) {
                     continue;
                 }
+                // Values occupy the low bits; unused payload bits remain zero.
                 let mut word = (selector as u32) << 28;
                 for (i, &value) in group.iter().enumerate() {
                     word |= value << (i as u32 * bits);
@@ -69,6 +77,7 @@ impl IntegerCodec for Simple9 {
             let &(capacity, bits) = MODES.get(selector).ok_or_else(|| {
                 io::Error::new(io::ErrorKind::InvalidData, "Invalid Simple9 selector")
             })?;
+            // Ignore padding slots in the last word using the count from the block header.
             let count = capacity.min(value_count - output.len());
             let mask = (1_u32 << bits) - 1;
 

@@ -1,7 +1,8 @@
-/* Exact document-at-a-time retrieval over compressed posting cursors.
-AND aligns cursors (rarest term first); OR visits the union in doc-ID order.
-Only ten hits and one decoded block per term are retained. Equal scores
-are ordered by internal doc ID for deterministic results. */
+//! Exact document-at-a-time retrieval over compressed posting cursors.
+//! AND aligns cursors, starting with the rarest term; OR visits their union in
+//! increasing document-ID order. A bounded heap retains the ten best hits.
+//! Equal scores favor smaller internal document IDs for deterministic results.
+
 use super::{bm25::Bm25, snippet};
 use crate::compression::Simple9;
 use crate::index::{CollectionStats, Lexicon, PageTable, PassageStore, PostingsReader};
@@ -11,6 +12,7 @@ use std::collections::{BinaryHeap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
 
+/// Whether every normalized query term or at least one must occur in a result.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QueryMode {
     Conjunctive, // AND
@@ -35,12 +37,14 @@ impl QueryMode {
     }
 }
 
+/// A query term's frequency and BM25 contribution for one result (zero if absent).
 #[derive(Debug)]
 pub struct TermScore {
     pub term: String,
     pub frequency: u32,
     pub score: f64,
 }
+/// One ranked passage, with internal/original IDs, score details, and optional snippet.
 #[derive(Debug)]
 pub struct SearchHit {
     pub doc_id: u32,
@@ -70,17 +74,20 @@ impl PartialOrd for SearchHit {
     }
 }
 
+/// Distinct query terms, at most ten ranked hits, and the total number of matched documents.
 pub struct SearchResult {
     pub terms: Vec<String>,
     pub hits: Vec<SearchHit>,
     pub matched_documents: u64,
 }
 struct TermCursor {
+    // Maps a reordered cursor back to query-order frequency and IDF arrays.
     term_index: usize,
     reader: PostingsReader<Simple9>,
     current: Option<u32>,
 }
 
+/// Reusable loaded dictionaries/statistics; posting cursors are opened per query.
 pub struct SearchEngine {
     index_dir: PathBuf,
     lexicon: Lexicon,
@@ -90,6 +97,8 @@ pub struct SearchEngine {
     passages: Option<PassageStore>,
 }
 impl SearchEngine {
+    /// Load a matching set of trusted index files and optionally open the source TSV.
+    /// Document counts, tokenizer identity, and posting/page-table consistency are assumed.
     pub fn open(
         index_dir: impl AsRef<Path>,
         dataset: Option<&Path>,
@@ -124,6 +133,8 @@ impl SearchEngine {
         self.lexicon.terms.len()
     }
 
+    /// Return exact top-ten BM25 results for distinct normalized terms.
+    /// Repeated query terms count once; an empty query returns no matches.
     pub fn search(&mut self, query: &str, mode: QueryMode) -> io::Result<SearchResult> {
         let mut seen = HashSet::new();
         let terms: Vec<String> = SimpleTokenizer
@@ -140,6 +151,7 @@ impl SearchEngine {
         let mut idfs = vec![0.0; result.terms.len()];
         for (term_index, term) in result.terms.iter().enumerate() {
             let Some(entry) = self.lexicon.terms.get(term) else {
+                // A missing term makes AND impossible; OR can still match the remaining terms.
                 if mode == QueryMode::Conjunctive {
                     return Ok(result);
                 }
@@ -159,6 +171,7 @@ impl SearchEngine {
         let mut heap = BinaryHeap::with_capacity(11);
         let mut frequencies = vec![0; result.terms.len()];
         if mode == QueryMode::Conjunctive {
+            // The shortest list usually rules out candidates earliest.
             cursors.sort_by_key(|c| c.reader.doc_freq());
             let mut target = 0;
             'align: loop {
@@ -167,10 +180,12 @@ impl SearchEngine {
                         break 'align;
                     };
                     if doc_id > target {
+                        // This list skipped the target; restart alignment at its next possible candidate.
                         target = doc_id;
                         continue 'align;
                     }
                 }
+                // Every cursor now points to target, so each has a valid frequency.
                 frequencies.fill(0);
                 for cursor in &cursors {
                     frequencies[cursor.term_index] = cursor.reader.frequency().unwrap();
@@ -186,6 +201,7 @@ impl SearchEngine {
             for cursor in &mut cursors {
                 cursor.current = cursor.reader.next_geq(0)?;
             }
+            // Visit the smallest pending document once, combining all lists currently on it.
             while let Some(doc_id) = cursors.iter().filter_map(|c| c.current).min() {
                 frequencies.fill(0);
                 for cursor in &cursors {
@@ -195,6 +211,7 @@ impl SearchEngine {
                 }
                 self.consider(doc_id, &result.terms, &idfs, &frequencies, &mut heap);
                 result.matched_documents += 1;
+                // Advance only matching lists; later IDs remain pending for the next iteration.
                 for cursor in &mut cursors {
                     if cursor.current == Some(doc_id) {
                         cursor.current = match doc_id.checked_add(1) {
@@ -205,10 +222,12 @@ impl SearchEngine {
                 }
             }
         }
+        // Heap order exposes the worst hit, not display order; sort the retained hits here.
         result.hits = heap.into_vec();
         result
             .hits
             .sort_by(|a, b| b.score.total_cmp(&a.score).then(a.doc_id.cmp(&b.doc_id)));
+        // Defer source reads and snippet generation until only the top ten remain.
         if let Some(passages) = &mut self.passages {
             for hit in &mut result.hits {
                 let entry = &self.page_table.entries[hit.doc_id as usize];
@@ -226,6 +245,7 @@ impl SearchEngine {
         frequencies: &[u32],
         heap: &mut BinaryHeap<SearchHit>,
     ) {
+        // Dense posting IDs index the page table directly under the trusted-index contract.
         let entry = &self.page_table.entries[doc_id as usize];
 
         let score: f64 = frequencies
@@ -233,6 +253,7 @@ impl SearchEngine {
             .zip(idfs)
             .map(|(&tf, &idf)| self.bm25.score(tf, entry.doc_length, idf))
             .sum();
+        // Reject noncompetitive candidates before cloning terms and allocating score details.
         if heap.len() == 10
             && heap.peek().is_some_and(|worst| {
                 score < worst.score || (score == worst.score && doc_id >= worst.doc_id)
@@ -257,6 +278,7 @@ impl SearchEngine {
             term_scores,
             snippet: String::new(),
         });
+        // A candidate may temporarily grow the heap to eleven; discard its worst member.
         if heap.len() > 10 {
             heap.pop();
         }

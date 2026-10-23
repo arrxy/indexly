@@ -1,9 +1,15 @@
+//! Collection totals for BM25, stored in a fixed 28-byte STA1 record.
+//! After the four-byte magic come document count and total token count (u64),
+//! then tokenizer ID and version (u32), all little-endian. Tokenizer fields are
+//! recorded for identification but are not checked by the current search startup.
+
 use crate::index::page_table::PageTable;
 use std::fs::File;
 use std::io;
 use std::io::{Read, Write};
 use std::path::Path;
 
+/// Corpus totals and tokenizer identity persisted alongside the index.
 pub struct CollectionStats {
     pub document_count: u64,
     pub total_doc_length: u64,
@@ -12,6 +18,7 @@ pub struct CollectionStats {
 }
 
 impl CollectionStats {
+    /// Count every document, including empty ones; sum normalized token counts.
     pub fn from_page_table(table: &PageTable) -> Self {
         Self {
             document_count: table.entries.len() as u64,
@@ -25,6 +32,7 @@ impl CollectionStats {
         }
     }
 
+    /// Return zero for an empty collection so callers can avoid division by zero.
     pub fn average_doc_length(&self) -> f64 {
         if self.document_count == 0 {
             0.0
@@ -33,6 +41,7 @@ impl CollectionStats {
         }
     }
 
+    /// Write the fixed STA1 record used by search startup.
     pub fn save(&self, path: impl AsRef<Path>) -> std::io::Result<()> {
         let mut file = File::create(path)?;
         file.write_all(b"STA1")?;
@@ -42,6 +51,7 @@ impl CollectionStats {
         file.write_all(&self.tokenizer_version.to_le_bytes())
     }
 
+    /// Read one STA1 record and reject unsupported or incomplete metadata.
     pub fn load(path: impl AsRef<Path>) -> io::Result<Self> {
         let mut file = File::open(path)?;
 

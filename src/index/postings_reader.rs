@@ -1,9 +1,9 @@
+//! Forward-only cursor over one term's compressed posting list.
+//! Its block directory stays in memory, but only one posting block is decoded at
+//! a time. Galloping over block-ending document IDs skips irrelevant payloads.
+//! Each cursor owns its file handle, so separate cursors can seek independently.
+
 use crate::binary::{invalid, read_u32, read_u64};
-/*
-Reads one term's persisted block directory, then gallops over its last doc IDs.
-Only the selected posting block is decompressed. The cursor moves forward,
-keeps one decoded block, and owns an independent postings file handle.
-*/
 use std::fs::File;
 use std::io::{self, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
@@ -17,14 +17,17 @@ struct BlockEntry {
     offset: u64,
 }
 
+/// One forward-only posting cursor; starts unpositioned and never rewinds.
 pub struct PostingsReader<C: IntegerCodec> {
     reader: BufReader<File>,
     codec: C,
     doc_freq: u32,
     blocks: Vec<BlockEntry>,
+    // First directory entry not yet consumed; blocks.len() marks exhaustion.
     next_block: usize,
     doc_ids: Vec<u32>,
     frequencies: Vec<u32>,
+    // Same index in both decoded vectors; len() means the current block is spent.
     position: usize,
 }
 
@@ -67,24 +70,30 @@ impl<C: IntegerCodec> PostingsReader<C> {
         })
     }
 
+    /// Total documents in this list, used for IDF and rarest-first AND ordering.
     pub fn doc_freq(&self) -> u32 {
         self.doc_freq
     }
 
+    /// Current document, or None before the first seek and after exhaustion.
     pub fn doc_id(&self) -> Option<u32> {
         self.doc_ids.get(self.position).copied()
     }
 
+    /// Term occurrences in the current document; valid whenever doc_id is Some.
     pub fn frequency(&self) -> Option<u32> {
         self.frequencies.get(self.position).copied()
     }
 
-    // Return the current document if it already satisfies target. Otherwise move forward; None means exhausted.
+    /// Seek to the first remaining document at least `target`.
+    /// A lower target keeps the current document; an exhausted cursor stays exhausted.
     pub fn next_geq(&mut self, target: u32) -> io::Result<Option<u32>> {
+        // Reuse the decoded suffix before touching the directory or disk.
         self.position += self.doc_ids[self.position..].partition_point(|&doc_id| doc_id < target);
         if let Some(doc_id) = self.doc_id() {
             return Ok(Some(doc_id));
         }
+        // Choose a block by its last ID; intermediate payloads never need decoding.
         let Some(block_index) = gallop(&self.blocks, self.next_block, target) else {
             self.next_block = self.blocks.len();
             self.doc_ids.clear();
@@ -100,6 +109,7 @@ impl<C: IntegerCodec> PostingsReader<C> {
     fn load_block(&mut self, index: usize) -> io::Result<()> {
         let entry = &self.blocks[index];
         self.reader.seek(SeekFrom::Start(entry.offset))?;
+        // Five u32 fields: first ID, last ID, posting count, gap bytes, frequency bytes.
         let first = read_u32(&mut self.reader)?;
         let _last = read_u32(&mut self.reader)?;
         let count = read_u32(&mut self.reader)?;
@@ -109,6 +119,7 @@ impl<C: IntegerCodec> PostingsReader<C> {
         let mut frequencies = vec![0_u8; frequency_bytes as usize];
         self.reader.read_exact(&mut gaps)?;
         self.reader.read_exact(&mut frequencies)?;
+        // The first ID is absolute; the remaining count - 1 values are positive gaps.
         let gaps = self.codec.decode(&gaps, count as usize - 1)?;
         let frequencies = self.codec.decode(&frequencies, count as usize)?;
         let mut doc_ids = Vec::with_capacity(count as usize);
@@ -142,6 +153,7 @@ fn gallop(blocks: &[BlockEntry], start: usize, target: u32) -> Option<usize> {
         upper = start.saturating_add(step).min(blocks.len() - 1);
         step = step.saturating_mul(2);
     }
+    // Exponential probing found the bracket; binary search finds its first match.
     Some(lower + blocks[lower..=upper].partition_point(|b| b.last_doc_id < target))
 }
 

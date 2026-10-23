@@ -1,3 +1,7 @@
+//! Turn input passages into sorted temporary runs, then encode final posting lists.
+//! Run building writes a legacy page table in document order. The application
+//! adds source-text offsets after the final index has been written.
+
 mod parallel;
 pub mod sorting;
 pub use parallel::build_runs_parallel;
@@ -18,6 +22,8 @@ use std::io;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
+/// Build sorted runs serially and return their count (files are numbered from 1).
+/// Batch bytes estimate serialized postings, not total process memory.
 pub fn build_runs<T: Tokenizer>(
     input_path: &str,
     output_path: &str,
@@ -39,12 +45,14 @@ pub fn build_runs<T: Tokenizer>(
     let passages = reader::read_passages_from_file(input_path)?;
     for (number, passage) in passages.enumerate() {
         let (passage_id, text) = passage?;
+        // Input row order defines the internal ID, independently of the original passage ID.
         let doc_id = u32::try_from(number)
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Too many documents"))?;
         let tokens = tokenizer.tokenize(&text);
         let doc_length = builder.add_document(doc_id, tokens);
         page_writer.write_all(&passage_id.to_le_bytes())?;
         page_writer.write_all(&doc_length.to_le_bytes())?;
+        // Flush only between documents, keeping each term/document pair in a single run.
         if builder.buffered_bytes >= max_batch_bytes {
             run_count += 1;
             let path = format!("{output_path}/run_{run_count:04}.bin");
@@ -60,6 +68,7 @@ pub fn build_runs<T: Tokenizer>(
     Ok(run_count)
 }
 
+/// Print decoded intermediate records for inspecting a saved run.
 pub fn inspect_run(file_path: &str) -> std::io::Result<()> {
     let file = std::fs::File::open(file_path)?;
     let mut reader = std::io::BufReader::new(file);

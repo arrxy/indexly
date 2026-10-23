@@ -1,13 +1,17 @@
+//! Add TSV row offsets to the page table and read text for the final search hits.
+//! The original TSV remains the text store; no text is copied into postings.
+//! Offsets and lengths are measured in bytes, so Unicode text can be sought directly.
+
 use crate::binary::invalid;
-/* Add text offsets to a completed page table in one sequential TSV scan.
-The original TSV remains the text store. Only the top-ranked passages are
-read at query time; no passage text or positions are added to postings. */
+
 use super::page_table::{PageTable, PageTableEntry};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Add row offsets without changing token counts or rebuilding postings.
+/// Write a temporary table and replace the original only after the scan succeeds.
 pub fn prepare_passages(
     index_dir: impl AsRef<Path>,
     dataset: impl AsRef<Path>,
@@ -73,6 +77,7 @@ pub fn prepare_passages(
                     "Dataset passage ID differs from index at document {doc_id}"
                 )));
             }
+            // Save the whole row so query-time reads can verify its original passage ID.
             let passage_offset = offset;
             let passage_length = u32::try_from(contents.len())
                 .map_err(|_| invalid("Passage text exceeds u32 length"))?;
@@ -80,6 +85,7 @@ pub fn prepare_passages(
             writer.write_all(&entry.doc_length.to_le_bytes())?;
             writer.write_all(&passage_offset.to_le_bytes())?;
             writer.write_all(&passage_length.to_le_bytes())?;
+            // Advance by bytes actually read, including CRLF/LF removed from the saved length.
             offset += bytes as u64;
         }
         line.clear();
@@ -90,6 +96,7 @@ pub fn prepare_passages(
         if after.len() != metadata.len() || after.modified()? != metadata.modified()? {
             return Err(invalid("Dataset changed while building passage offsets"));
         }
+        // Persist the replacement before rename; failures leave the old table available.
         writer.flush()?;
         writer.get_ref().sync_all()?;
         drop(writer);
@@ -102,10 +109,13 @@ pub fn prepare_passages(
     result
 }
 
+/// Seekable source TSV used only after the top search hits have been selected.
 pub struct PassageStore {
     reader: BufReader<File>,
 }
 impl PassageStore {
+    /// Open the recorded TSV, or an identical copy moved to `dataset_override`.
+    /// The caller must keep its contents unchanged; modification times are not checked.
     pub fn open(table: &PageTable, dataset_override: Option<&Path>) -> io::Result<Self> {
         let source=table.source.as_ref().ok_or_else(||invalid("Page table has no passage offsets. Run prepare-snippets with the index and TSV first."))?;
         let path = dataset_override.unwrap_or(&source.path);
@@ -123,6 +133,7 @@ impl PassageStore {
         })
     }
 
+    /// Read one complete row, verify its passage ID, and return text after the first tab.
     pub fn text(&mut self, entry: &PageTableEntry) -> io::Result<String> {
         self.reader.seek(SeekFrom::Start(entry.passage_offset))?;
         let mut row = vec![0; entry.passage_length as usize];

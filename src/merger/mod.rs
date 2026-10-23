@@ -1,11 +1,10 @@
+//! Merge sorted runs using one pending posting per input in a min-heap.
+//! `merge_into` emits to a callback, allowing the last pass to compress directly.
+//! `merge_runs` uses the same traversal to write uncompressed intermediate runs.
+
 mod parallel;
 pub use parallel::{MAX_OPEN_INPUTS, prepare_runs};
 
-/*
-Traverse sorted binary runs with a min-heap. merge_into() emits postings
-to a callback. merge_runs() uses it to write intermediate binary runs.
-The final pass uses it to write compressed posting blocks directly.
-*/
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::fs::File;
@@ -14,6 +13,9 @@ use std::path::{Path, PathBuf};
 
 use crate::indexer::read_next_posting;
 
+/// Emit sorted records and return their count without creating a final merged file.
+/// Inputs must already be sorted and contain disjoint term/document pairs;
+/// this traversal does not combine duplicate pairs across runs.
 pub fn merge_into<F>(run_paths: &[PathBuf], mut emit: F) -> io::Result<u64>
 where
     F: FnMut(&str, u32, u32) -> io::Result<()>,
@@ -28,6 +30,7 @@ where
         .iter()
         .map(|path| File::open(path).map(BufReader::new))
         .collect::<io::Result<Vec<_>>>()?;
+    // Reverse makes BinaryHeap a min-heap. run_id identifies which reader to refill.
     let mut heap: BinaryHeap<Reverse<(String, u32, usize, u32)>> = BinaryHeap::new();
     for (run_id, reader) in readers.iter_mut().enumerate() {
         if let Some(posting) = read_next_posting(reader)? {
@@ -43,6 +46,7 @@ where
     while let Some(Reverse((term, doc_id, run_id, frequency))) = heap.pop() {
         emit(&term, doc_id, frequency)?;
         count += 1;
+        // Only the winning run advances; every other run keeps its current minimum.
         if let Some(posting) = read_next_posting(&mut readers[run_id])? {
             heap.push(Reverse((
                 posting.term,
@@ -55,6 +59,7 @@ where
     Ok(count)
 }
 
+/// Write an intermediate run, flushing successfully before the caller can remove inputs.
 pub fn merge_runs(run_paths: &[PathBuf], output_path: &Path) -> io::Result<u64> {
     let mut output = BufWriter::new(File::create(output_path)?);
     let count = merge_into(run_paths, |term, doc_id, frequency| {

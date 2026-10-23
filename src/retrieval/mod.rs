@@ -1,3 +1,5 @@
+//! Query parsing, exact AND/OR retrieval, BM25 scoring, and result snippets.
+
 mod bm25;
 mod cli;
 mod dat;

@@ -1,3 +1,5 @@
+//! Shared tokenization rules for both index construction and query processing.
+
 mod simple;
 mod tokenizer;
 

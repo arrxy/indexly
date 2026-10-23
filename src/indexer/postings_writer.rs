@@ -1,9 +1,9 @@
-/*
-Consumes sorted postings incrementally and writes compressed blocks plus
-lexicon entries. The final merge can call push() directly without writing
-an uncompressed merged file. Only the current posting block is buffered.
-All integer fields use little-endian byte order.
-*/
+//! Stream sorted postings into postings.bin, blocks.bin, and lexicon.bin.
+//! Only the current block is buffered; the final merge can feed `push` directly.
+//! IDX1 contains a codec byte and block size after its magic; BLK1 starts fixed
+//! 12-byte directory records (last_doc_id:u32, postings_offset:u64). LEX2 stores
+//! one entry per term. All integer fields are little-endian.
+
 use std::fs::{self, File};
 use std::io::{self, BufReader, BufWriter, Write};
 use std::path::Path;
@@ -11,10 +11,12 @@ use std::path::Path;
 use super::read_next_posting;
 use crate::compression::IntegerCodec;
 
+/// State for a single sorted stream; counters describe the current term and block.
 pub struct PostingsWriter<'a, C: IntegerCodec> {
     postings: BufWriter<File>,
     lexicon: BufWriter<File>,
     blocks: BufWriter<File>,
+    // Absolute byte positions include the magic/header already written to each file.
     blocks_position: u64,
     list_blocks_start: u64,
     block_count: u32,
@@ -30,6 +32,7 @@ pub struct PostingsWriter<'a, C: IntegerCodec> {
 }
 
 impl<'a, C: IntegerCodec> PostingsWriter<'a, C> {
+    /// Create index files with empty headers; block_size must be positive and fit u32.
     pub fn new(output_dir: &Path, block_size: usize, codec: &'a C) -> io::Result<Self> {
         let block_size_u32 = u32::try_from(block_size)
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "Block size exceeds u32"))?;
@@ -69,7 +72,11 @@ impl<'a, C: IntegerCodec> PostingsWriter<'a, C> {
     }
 
     /// Accepts sorted, unique postings with nonempty terms and positive frequencies.
+    /// Terms are lexicographically ordered, and IDs strictly increase within a term.
+    /// Counts/lengths must fit u32; gaps and frequencies must fit the chosen codec.
+    /// These trusted-input invariants are not checked again here.
     pub fn push(&mut self, term: &str, doc_id: u32, frequency: u32) -> io::Result<()> {
+        // Close the old list before recording the new term's byte ranges.
         if self.current_term.as_deref() != Some(term) {
             self.finish_term()?;
             self.current_term = Some(term.to_owned());
@@ -87,7 +94,8 @@ impl<'a, C: IntegerCodec> PostingsWriter<'a, C> {
         Ok(())
     }
 
-    // Must succeed before temporary merge inputs are deleted.
+    /// Flush the tail block and all three files, returning the number of terms.
+    /// Callers must wait for success before deleting temporary merge inputs.
     pub fn finish(mut self) -> io::Result<u64> {
         self.finish_term()?;
         self.postings.flush()?;
@@ -107,6 +115,7 @@ impl<'a, C: IntegerCodec> PostingsWriter<'a, C> {
             .collect();
         let gaps = self.codec.encode(&gaps)?;
         let frequencies = self.codec.encode(&self.frequencies)?;
+        // A block header is five u32 fields, followed by separate gap and frequency payloads.
         for value in [
             self.doc_ids[0],
             last,
@@ -118,6 +127,7 @@ impl<'a, C: IntegerCodec> PostingsWriter<'a, C> {
         }
         self.postings.write_all(&gaps)?;
         self.postings.write_all(&frequencies)?;
+        // Record the header's offset before advancing it or clearing the decoded block.
         self.blocks.write_all(&last.to_le_bytes())?;
         self.blocks.write_all(&self.position.to_le_bytes())?;
         self.position += 20 + gaps.len() as u64 + frequencies.len() as u64;
@@ -131,6 +141,7 @@ impl<'a, C: IntegerCodec> PostingsWriter<'a, C> {
     fn finish_term(&mut self) -> io::Result<()> {
         if let Some(term) = self.current_term.take() {
             self.flush_block()?;
+            // Variable-length LEX2 entry: term bytes, posting range, df, and directory range.
             self.lexicon.write_all(&(term.len() as u32).to_le_bytes())?;
             self.lexicon.write_all(term.as_bytes())?;
             self.lexicon.write_all(&self.list_start.to_le_bytes())?;
@@ -146,7 +157,7 @@ impl<'a, C: IntegerCodec> PostingsWriter<'a, C> {
     }
 }
 
-// Retained for callers that already have a merged binary file.
+/// Compress an already-merged run through the same writer used by the streaming merge.
 pub fn write_index<C: IntegerCodec>(
     merged_path: &Path,
     output_dir: &Path,

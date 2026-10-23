@@ -1,6 +1,7 @@
-/* Sort a posting batch before it is written as a run. GPU is the default
-when compiled in and uses batch-local lexicographic numeric term IDs.
-CPU sorting is available through --sort cpu or a CPU-only build. */
+//! Choose the posting sort backend without changing the serialized run format.
+//! Both backends order by term, then document ID. GPU mode uses numeric term ranks
+//! and returns original indices instead of moving the postings' owned strings.
+
 use std::io;
 
 use super::builder::IntermediatePosting;
@@ -20,11 +21,15 @@ pub enum PostingOrder {
     Indices(Vec<u32>),
 }
 
+/// Shared sorting interface for indexing workers.
+/// Implementations must produce ascending (term, doc_id) order. An index-based
+/// result must be a complete permutation; the run writer does not revalidate it.
 pub trait PostingSorter: Sync {
     fn sort(&self, postings: &mut [IntermediatePosting]) -> io::Result<PostingOrder>;
     fn description(&self) -> &str;
 }
 
+/// Select the requested backend; an unavailable GPU is an error, not a CPU fallback.
 pub fn create_sorter(mode: &str) -> io::Result<Box<dyn PostingSorter>> {
     match mode {
         "cpu" => Ok(Box::new(CpuSorter)),

@@ -1,3 +1,6 @@
+//! Shared little-endian readers for on-disk integer fields.
+//! `read_exact` distinguishes a truncated field from a successfully read value.
+
 use std::io::{self, Read};
 
 pub(crate) fn read_u32(reader: &mut impl Read) -> io::Result<u32> {

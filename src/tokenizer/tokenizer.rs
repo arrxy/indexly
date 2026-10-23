@@ -1,9 +1,7 @@
-/*
-It contains the tokenizer for the indexer. The tokenizer is responsible for breaking down the text into
-tokens that can be indexed and searched. This is a trait that can be implemented by different tokenizers,
-such as a simple whitespace tokenizer or a more complex one that handles punctuation and special characters.
-*/
+//! Tokenization contract: indexing and retrieval must normalize text consistently.
 
+/// Produces normalized tokens in source order, including repeated occurrences.
 pub trait Tokenizer {
+    /// Return owned tokens so a builder can retain terms after the input text is freed.
     fn tokenize(&self, text: &str) -> Vec<String>;
 }

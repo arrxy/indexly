@@ -1,4 +1,6 @@
-/* A single process handles successive queries and mode changes. */
+//! Interactive search loop that reuses one loaded index across successive queries.
+//! Slash commands change modes or end the session; ordinary lines are queries.
+
 use super::{QueryMode, SearchEngine};
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
@@ -14,6 +16,7 @@ Commands inside the prompt:
 Enter ordinary text to run a query. The process stays open after each query.
 ";
 
+/// Parse search options, load the index once, and connect the session to stdin/stdout.
 pub fn run_cli(args: impl Iterator<Item = String>) -> io::Result<()> {
     let mut args = args;
     let mut index = None;
@@ -51,6 +54,7 @@ pub fn run_cli(args: impl Iterator<Item = String>) -> io::Result<()> {
     run_session(&mut engine, &mut stdin.lock(), &mut stdout.lock(), mode)
 }
 
+/// Serve queries until /quit or EOF; injected streams also support integration tests.
 pub fn run_session(
     engine: &mut SearchEngine,
     input: &mut impl BufRead,
@@ -65,6 +69,7 @@ pub fn run_session(
     let mut line = String::new();
     loop {
         write!(output, "{}> ", mode.label())?;
+        // Make the prompt visible before blocking for input.
         output.flush()?;
         line.clear();
         if input.read_line(&mut line)? == 0 {
@@ -102,6 +107,7 @@ pub fn run_session(
         let started = Instant::now();
         let result = match engine.search(query, mode) {
             Ok(result) => result,
+            // User query errors can be retried; index and I/O failures terminate the session.
             Err(e) if e.kind() == io::ErrorKind::InvalidInput => {
                 writeln!(output, "Query error: {e}")?;
                 continue;

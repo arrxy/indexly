@@ -1,15 +1,20 @@
-/* Query-dependent snippets: prefer windows containing more distinct query
-terms, then more matches. Highlight whole tokens using the index tokenizer's
-alphanumeric splitting and Unicode lowercase rules. Byte slicing always
-uses character boundaries, and only top-ranked passages are processed. */
+//! Choose a query-dependent text window and bracket matching whole tokens.
+//! Prefer more distinct query terms, then more total matches, then earlier text.
+//! Token matching follows the indexer's alphanumeric/Unicode-lowercase rules;
+//! all byte slices use character boundaries. Only retained search hits need snippets.
+
 use std::collections::HashMap;
 
 const WINDOW: usize = 240;
+/// Return a window of up to 240 Unicode scalar values with matching tokens bracketed.
+/// Ellipses indicate omitted context; with no match, use the start of the passage.
+/// `terms` must already contain distinct, normalized query tokens.
 pub fn generate(text: &str, terms: &[String]) -> String {
     let text: String = text
         .chars()
         .map(|c| if c.is_control() { ' ' } else { c })
         .collect();
+    // Translate character positions to UTF-8 byte offsets before slicing text.
     let mut boundaries: Vec<_> = text.char_indices().map(|(i, _)| i).collect();
     boundaries.push(text.len());
     let chars = boundaries.len() - 1;
@@ -20,6 +25,7 @@ pub fn generate(text: &str, terms: &[String]) -> String {
         .collect();
     let mut matches = Vec::new();
     let mut start = None;
+    // A synthetic separator flushes a final token without a special end-of-text branch.
     for (offset, ch) in text
         .char_indices()
         .chain(std::iter::once((text.len(), ' ')))
@@ -62,6 +68,7 @@ pub fn generate(text: &str, terms: &[String]) -> String {
             }
         }
     }
+    // Highlight in the original spelling; normalization was only used for matching.
     let low = boundaries[best.2];
     let high = boundaries[(best.2 + WINDOW).min(chars)];
     let mut result = String::new();

@@ -1,6 +1,6 @@
-/* Adapt search-engine postings to metal-radix's numeric key-pair API.
-Batch-local term ranks preserve the ordering required by the run merger.
-The crate owns GPU pipelines, shader execution and result validation. */
+//! Adapt string postings to metal-radix's numeric key-pair API.
+//! Lexicographic term ranks preserve the merger's ordering within each batch.
+//! The dependency owns GPU pipelines, shader execution, and result validation.
 
 use std::collections::{HashMap, HashSet};
 use std::io;
@@ -32,6 +32,7 @@ impl PostingSorter for GpuSorter {
             return Ok(PostingOrder::Indices(Vec::new()));
         }
         let keys = numeric_keys(postings)?;
+        // Share one GPU sorter across workers while serializing device submissions.
         let sorter = self
             .sorter
             .lock()
@@ -57,12 +58,14 @@ fn numeric_keys(postings: &[IntermediatePosting]) -> io::Result<Vec<[u32; 2]>> {
         unique.insert(posting.term.as_str());
     }
     let mut vocabulary: Vec<_> = unique.into_iter().collect();
+    // Hash-set iteration is arbitrary; sort terms before assigning comparable numeric ranks.
     vocabulary.sort_unstable();
     let ids: HashMap<_, _> = vocabulary
         .into_iter()
         .enumerate()
         .map(|(id, term)| (term, id as u32))
         .collect();
+    // Ranks are batch-local; the writer still serializes the original term strings.
     Ok(postings
         .iter()
         .map(|posting| [ids[posting.term.as_str()], posting.doc_id])

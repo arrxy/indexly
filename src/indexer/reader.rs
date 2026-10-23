@@ -1,12 +1,10 @@
-/*
-This module contains code that takes user input and
-reads the text data and generates passage ids and streams them to the indexer
-The dataset here is a tsv file with the following format:
-passage_id \t passage_text
-*/
+//! Stream TSV rows as original passage IDs and text; assign no internal IDs here.
+//! Only the first tab separates the numeric ID from text, which may contain tabs.
+//! Row parsing errors are yielded lazily when the indexing producer reaches them.
 
 use std::io::{self, BufRead, BufReader};
 
+/// Open a buffered row iterator; each item carries its own parsing or I/O error.
 pub fn read_passages_from_file(
     file_path: &str,
 ) -> io::Result<impl Iterator<Item = io::Result<(u32, String)>>> {
