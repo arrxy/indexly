@@ -1,3 +1,5 @@
-./target/release/search-engine data/data_set.tsv --output output/<index_name>
+BUILD = cargo build --release
 
-./target/release/search-engine search --index output/<index_name>
+GENERATE INDEX = ./target/release/search-engine data/data_set.tsv --output output/<index_name>
+
+RUN QUERY = ./target/release/search-engine search --index output/<index_name>
