@@ -50,21 +50,21 @@ impl IntegerCodec for Simple9 {
     }
 
     fn decode(&self, bytes: &[u8], value_count: usize) -> io::Result<Vec<u32>> {
-        if bytes.len() % 4 != 0 {
+        if !bytes.len().is_multiple_of(4) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "Byte slice length must be a multiple of 4",
             ));
         }
         let mut output = Vec::new();
-        for chunk in bytes.chunks_exact(4) {
+        for chunk in bytes.as_chunks::<4>().0 {
             if output.len() == value_count {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "Extra Simple9 words after the expected values",
                 ));
             }
-            let word = u32::from_le_bytes(chunk.try_into().unwrap());
+            let word = u32::from_le_bytes(*chunk);
             let selector = (word >> 28) as usize;
             let &(capacity, bits) = MODES.get(selector).ok_or_else(|| {
                 io::Error::new(io::ErrorKind::InvalidData, "Invalid Simple9 selector")

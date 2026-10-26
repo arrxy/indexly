@@ -1,5 +1,6 @@
 mod simple;
-mod tokenizer;
+#[path = "tokenizer.rs"]
+mod traits;
 
 pub use simple::SimpleTokenizer;
-pub use tokenizer::Tokenizer;
+pub use traits::Tokenizer;

@@ -1,3 +1,4 @@
+#[allow(dead_code)]
 mod inverted_index;
 mod lexicon;
 mod metadata;

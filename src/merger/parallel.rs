@@ -89,11 +89,6 @@ pub fn prepare_runs(
             }
         })?;
 
-        println!(
-            "Intermediate merge pass {pass}: {} inputs -> {} outputs ({active_workers} workers)",
-            runs.len(),
-            next.len()
-        );
         runs = next;
     }
     Ok(runs)

@@ -11,12 +11,12 @@ Indexing usage: search-engine <dataset.tsv> [options]
 
 Options:
   --output <directory>      Output directory (default: ./output/index)
-  --batch-bytes <number>    Serialized bytes per batch (default: 65536)
+  --batch-bytes <number>    Serialized bytes per worker batch (default: 67108864)
   --block-size <number>     Postings per compressed block (default: 128)
   --merge-fan-in <number>   Maximum inputs per merge (default: 64; maximum: 128)
-  --threads <number>       Run-building workers (default: 1)
-  --merge-threads <number> Merge workers (default: 1; capped by open-file budget)
-  --sort <cpu|gpu>          Posting sort backend (default: gpu; CPU-only builds default to cpu)
+  --threads <number>       Run-building workers (default: 8)
+  --merge-threads <number> Merge workers (default: 2; capped by open-file budget)
+  --sort <cpu|gpu>          Posting sort backend (default: cpu; GPU requires gpu-sort feature)
   --keep-intermediate      Keep intermediate files (default: remove on success)
   --help                   Show this help
 ";
@@ -37,120 +37,60 @@ pub fn run_index(args: impl Iterator<Item = String>) -> io::Result<()> {
     let Some(options) = parse_options(args)? else {
         return Ok(());
     };
-
-    if !Path::new(&options.dataset).is_file() {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            "Dataset file not found",
-        ));
-    }
-
-    let total_start = Instant::now();
-    let sort_start = Instant::now();
-    let sorter = indexer::sorting::create_sorter(&options.sort)?;
-    let sort_init = sort_start.elapsed();
-    if let Some(parent) = options.output.parent() {
-        if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent)?;
-        }
-    }
-    fs::create_dir(&options.output).map_err(|error| {
-        if error.kind() == io::ErrorKind::AlreadyExists {
-            invalid("Output directory already exists; choose a new --output directory")
+    let index_options = crate::IndexOptions {
+        threads: options.threads,
+        merge_threads: options.merge_threads,
+        batch_bytes: options.batch_bytes,
+        block_size: options.block_size,
+        merge_fan_in: options.merge_fan_in,
+        sort: if options.sort == "gpu" {
+            crate::SortBackend::Gpu
         } else {
-            error
-        }
-    })?;
-
-    let work = options.output.join("_work");
-    fs::create_dir(&work)?;
-    let work_str = work
-        .to_str()
-        .ok_or_else(|| invalid("Output path must be UTF-8"))?;
+            crate::SortBackend::Cpu
+        },
+        keep_intermediate: options.keep_intermediate,
+    };
     println!(
         "Workers: build {}, merge {}; batch threshold {} bytes per build worker",
         options.threads, options.merge_threads, options.batch_bytes
     );
+    let report = crate::build_index(&options.dataset, &options.output, &index_options)?;
     println!(
         "Sort backend: {}; initialization {:.2}s",
-        sorter.description(),
-        sort_init.as_secs_f64()
+        report.sort_backend,
+        report.sort_initialization.as_secs_f64()
     );
-
-    let stage = Instant::now();
-    let run_count = indexer::build_runs_parallel(
-        &options.dataset,
-        work_str,
-        options.batch_bytes,
-        &tokenizer::SimpleTokenizer,
-        options.threads,
-        sorter.as_ref(),
-    )?;
     println!(
-        "Build: {run_count} runs in {:.2}s",
-        stage.elapsed().as_secs_f64()
+        "Build: {} runs in {:.2}s",
+        report.run_count,
+        report.build_time.as_secs_f64()
     );
-    let runs: Vec<PathBuf> = (1..=run_count)
-        .map(|number| work.join(format!("run_{number:04}.bin")))
-        .collect();
-
-    let stage = Instant::now();
-    let runs = merger::prepare_runs(
-        runs,
-        &work,
-        options.merge_fan_in,
-        options.merge_threads,
-        options.keep_intermediate,
-    )?;
     println!(
-        "Intermediate merges: {} runs ready in {:.2}s",
-        runs.len(),
-        stage.elapsed().as_secs_f64()
+        "Intermediate merges: completed in {:.2}s",
+        report.intermediate_merge_time.as_secs_f64()
     );
-
-    let stage = Instant::now();
-    let codec = compression::Simple9;
-    let mut writer = indexer::PostingsWriter::new(&options.output, options.block_size, &codec)?;
-    let posting_count = merger::merge_into(&runs, |term, doc_id, frequency| {
-        writer.push(term, doc_id, frequency)
-    })?;
-    let term_count = writer.finish()?;
-    fs::copy(
-        work.join("page_table.bin"),
-        options.output.join("page_table.bin"),
-    )?;
     println!(
-        "Final merge + compression: {posting_count} postings, {term_count} terms in {:.2}s",
-        stage.elapsed().as_secs_f64()
+        "Final merge + compression: {} postings, {} terms in {:.2}s",
+        report.postings,
+        report.terms,
+        report.compression_time.as_secs_f64()
     );
-    let stage = Instant::now();
-    let documents = index::prepare_passages(&options.output, &options.dataset)?;
     println!(
-        "Passage offsets: {documents} documents in {:.2}s",
-        stage.elapsed().as_secs_f64()
+        "Passage offsets: {} documents in {:.2}s",
+        report.documents,
+        report.passage_offsets_time.as_secs_f64()
     );
-    {
-        let page_table = index::PageTable::load(options.output.join("page_table.bin"))?;
-
-        let stats = index::CollectionStats::from_page_table(&page_table);
-
-        stats.save(options.output.join("metadata.bin"))?;
-
-        println!(
-            "Metadata: {} documents, {} indexed tokens, average length {:.2}",
-            stats.document_count,
-            stats.total_doc_length,
-            stats.average_doc_length(),
-        );
-    }
-
-    // Only remove temporary files created inside this new output directory.
-    if !options.keep_intermediate {
-        fs::remove_dir_all(&work)?;
-    }
-
-    println!("Index: {}", options.output.display());
-    println!("Total: {:.2}s", total_start.elapsed().as_secs_f64());
+    let average = if report.documents == 0 {
+        0.0
+    } else {
+        report.tokens as f64 / report.documents as f64
+    };
+    println!(
+        "Metadata: {} documents, {} indexed tokens, average length {:.2}",
+        report.documents, report.tokens, average
+    );
+    println!("Index: {}", report.index_dir.display());
+    println!("Total: {:.2}s", report.elapsed.as_secs_f64());
     Ok(())
 }
 
@@ -165,11 +105,7 @@ fn parse_options(args: impl Iterator<Item = String>) -> io::Result<Option<Option
     let mut keep_intermediate = false; // creates a Boolean setting that controls whether temporary files are kept after indexing.
     let mut threads = 8; // Number of threads to use for indexing
     let mut merge_threads = 2; // Number of threads to use for merging
-    let mut sort = String::from(if cfg!(feature = "gpu-sort") {
-        "gpu"
-    } else {
-        "cpu"
-    });
+    let mut sort = String::from("cpu");
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -195,17 +131,14 @@ fn parse_options(args: impl Iterator<Item = String>) -> io::Result<Option<Option
     }
 
     if sort != "cpu" && sort != "gpu" {
-        println!("--sort must be cpu or gpu, setting to default");
-        sort = String::from("cpu");
+        return Err(invalid("--sort must be cpu or gpu"));
     }
     let dataset = dataset.ok_or_else(|| invalid(HELP))?;
     if !(2..=merger::MAX_OPEN_INPUTS).contains(&merge_fan_in) {
-        println!("--merge-fan-in must be between 2 and 128, setting to default");
-        merge_fan_in = 64;
+        return Err(invalid("--merge-fan-in must be between 2 and 128"));
     }
     if u32::try_from(block_size).is_err() {
-        println!("--block-size exceeds u32, setting to default");
-        block_size = 128;
+        return Err(invalid("--block-size exceeds u32"));
     }
 
     Ok(Some(Options {

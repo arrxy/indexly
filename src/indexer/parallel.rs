@@ -121,6 +121,8 @@ fn send_batches(
     Ok(())
 }
 
+// Keep worker configuration and shared synchronization handles explicit.
+#[allow(clippy::too_many_arguments)]
 fn run_worker<T: Tokenizer>(
     receiver: Arc<Mutex<mpsc::Receiver<Batch>>>,
     page_table: &Mutex<File>,

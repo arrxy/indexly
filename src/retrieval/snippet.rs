@@ -26,10 +26,10 @@ pub fn generate(text: &str, terms: &[String]) -> String {
     {
         if ch.is_alphanumeric() {
             start.get_or_insert(offset);
-        } else if let Some(begin) = start.take() {
-            if let Some(&id) = term_ids.get(text[begin..offset].to_lowercase().as_str()) {
-                matches.push((begin, offset, id));
-            }
+        } else if let Some(begin) = start.take()
+            && let Some(&id) = term_ids.get(text[begin..offset].to_lowercase().as_str())
+        {
+            matches.push((begin, offset, id));
         }
     }
     let mut best = (0, 0, 0); // distinct terms, total hits, character start

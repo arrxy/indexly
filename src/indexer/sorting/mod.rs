@@ -1,6 +1,5 @@
-/* Sort a posting batch before it is written as a run. GPU is the default
-when compiled in and uses batch-local lexicographic numeric term IDs.
-CPU sorting is available through --sort cpu or a CPU-only build. */
+/* CPU is the default. Optional GPU sorting uses batch-local numeric term IDs
+and must be requested explicitly after enabling the gpu-sort feature. */
 use std::io;
 
 use super::builder::IntermediatePosting;
