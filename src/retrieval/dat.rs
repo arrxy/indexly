@@ -12,11 +12,15 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Boolean matching mode for exact BM25 retrieval.
 pub enum QueryMode {
+    /// Match every distinct normalized query term.
     Conjunctive,
+    /// Match any distinct normalized query term.
     Disjunctive,
 }
 impl QueryMode {
+    /// Parse `and`/`conjunctive` or `or`/`disjunctive`, ignoring ASCII case.
     pub fn parse(value: &str) -> io::Result<Self> {
         match value.to_ascii_lowercase().as_str() {
             "and" | "conjunctive" => Ok(Self::Conjunctive),
@@ -27,6 +31,7 @@ impl QueryMode {
             )),
         }
     }
+    /// Return the display label `AND` or `OR`.
     pub fn label(self) -> &'static str {
         match self {
             Self::Conjunctive => "AND",
@@ -36,17 +41,27 @@ impl QueryMode {
 }
 
 #[derive(Debug)]
+/// One normalized query term's contribution to a retained hit.
 pub struct TermScore {
+    /// Normalized query term.
     pub term: String,
+    /// Term occurrences in the passage.
     pub frequency: u32,
+    /// BM25 score (a per-term contribution in `TermScore`, total in `SearchHit`).
     pub score: f64,
 }
 #[derive(Debug)]
+/// One of at most ten hits, ranked by score descending then internal ID ascending.
 pub struct SearchHit {
+    /// Internal zero-based row-order document ID.
     pub doc_id: u32,
+    /// Caller-provided passage ID.
     pub passage_id: u32,
+    /// BM25 score (a per-term contribution in `TermScore`, total in `SearchHit`).
     pub score: f64,
+    /// Contributions for all normalized query terms, including zero matches.
     pub term_scores: Vec<TermScore>,
+    /// Query-dependent excerpt with bracketed matches; empty when snippets are off.
     pub snippet: String,
 }
 // BinaryHeap's root is the WORST retained result.
@@ -70,9 +85,14 @@ impl PartialOrd for SearchHit {
     }
 }
 
+/// Normalized query terms, retained hits, and the total number of matching passages.
+#[derive(Debug)]
 pub struct SearchResult {
+    /// Distinct normalized query terms in query order.
     pub terms: Vec<String>,
+    /// Up to ten ranked hits.
     pub hits: Vec<SearchHit>,
+    /// Total Boolean matches, including those outside the retained top ten.
     pub matched_documents: u64,
 }
 struct TermCursor {
@@ -81,6 +101,9 @@ struct TermCursor {
     current: Option<u32>,
 }
 
+/// An opened disk-backed index. Lexicon and document metadata are memory-resident;
+/// postings are read one compressed block per query term. Searches require `&mut self`.
+/// This reader does not acquire locks; coordinate index replacement in the application.
 pub struct SearchEngine {
     index_dir: PathBuf,
     lexicon: Lexicon,
@@ -90,6 +113,14 @@ pub struct SearchEngine {
     passages: Option<PassageStore>,
 }
 impl SearchEngine {
+    /// Open an index using default BM25 parameters with snippets enabled.
+    /// For moved source files or ranking without snippets, use [`crate::SearchOptions`].
+    pub fn open_default(index_dir: impl AsRef<Path>) -> io::Result<Self> {
+        crate::SearchOptions::default().open(index_dir)
+    }
+
+    /// Open with explicit source, snippet, and BM25 settings.
+    /// Prefer [`Self::open_default`] or [`crate::SearchOptions`] in new applications.
     pub fn open(
         index_dir: impl AsRef<Path>,
         dataset: Option<&Path>,
@@ -155,13 +186,30 @@ impl SearchEngine {
         })
     }
 
+    /// Number of indexed passages, including empty passages.
     pub fn document_count(&self) -> u64 {
         self.stats.document_count
     }
+    /// Number of distinct normalized terms in the lexicon.
     pub fn term_count(&self) -> usize {
         self.lexicon.terms.len()
     }
 
+    /// Read the immutable indexed passage for the application preview pane.
+    pub fn passage_text(&mut self, doc_id: u32) -> io::Result<String> {
+        let entry = self
+            .page_table
+            .entries
+            .get(doc_id as usize)
+            .ok_or_else(|| invalid("Passage ID outside the page table"))?;
+        self.passages
+            .as_mut()
+            .ok_or_else(|| invalid("Passage text is not enabled"))?
+            .text(entry)
+    }
+
+    /// Score all Boolean matches exactly and retain the best ten. At most 64
+    /// distinct normalized terms are accepted; duplicate terms count once.
     pub fn search(&mut self, query: &str, mode: QueryMode) -> io::Result<SearchResult> {
         let mut seen = HashSet::new();
         let terms: Vec<String> = SimpleTokenizer

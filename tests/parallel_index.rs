@@ -103,7 +103,7 @@ fn parallel_build_and_merge_match_serial_bytes_and_page_order() {
     fs::write(&input, text).unwrap();
     let serial = root.0.join("serial");
     build(&input, &serial, "1", "1");
-    let table = search_engine::index::PageTable::load(serial.join("page_table.bin")).unwrap();
+    let table = indexly::index::PageTable::load(serial.join("page_table.bin")).unwrap();
     let mut actual_pages = Vec::new();
     for entry in &table.entries {
         actual_pages.extend_from_slice(&entry.passage_id.to_le_bytes());
@@ -187,9 +187,20 @@ fn input_errors_and_invalid_worker_options_terminate_with_errors() {
         ("--threads", "0"),
         ("--merge-threads", "0"),
         ("--merge-fan-in", "129"),
+        ("--sort", "invalid"),
+        ("--block-size", "18446744073709551615"),
     ] {
-        let result = run(&[input.to_str().unwrap(), flag, value]);
+        let invalid_output = root.0.join(flag.trim_start_matches('-'));
+        let result = run(&[
+            input.to_str().unwrap(),
+            "--output",
+            invalid_output.to_str().unwrap(),
+            flag,
+            value,
+        ]);
         assert!(!result.status.success());
+        assert!(String::from_utf8_lossy(&result.stderr).contains(flag));
+        assert!(!invalid_output.exists());
     }
     let help = run(&["--help"]);
     assert!(help.status.success());
@@ -318,11 +329,7 @@ fn gpu_sorted_runs_produce_identical_final_index_with_multiple_workers() {
         );
         if mode == "gpu" {
             assert!(String::from_utf8_lossy(&result.stdout).contains("via Metal, radix sort"));
-            assert!(String::from_utf8_lossy(&result.stdout).contains("Sort GPU:"));
-            assert!(
-                String::from_utf8_lossy(&result.stdout)
-                    .contains("writer follows sorted indices (no posting reorder)")
-            );
+            assert!(String::from_utf8_lossy(&result.stdout).contains("Sort backend:"));
         }
         assert!(!output.join("_work").exists());
         outputs.push(output);

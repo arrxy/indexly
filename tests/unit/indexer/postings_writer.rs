@@ -44,8 +44,10 @@ fn finish_flushes_tail_blocks_and_lexicon_entries() {
             let mut bytes = [0; 20];
             file.read_exact(&mut bytes).unwrap();
             let fields: Vec<_> = bytes
-                .chunks_exact(4)
-                .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|b| u32::from_le_bytes(*b))
                 .collect();
             let count = fields[2] as usize;
             let mut gaps = vec![0; fields[3] as usize];

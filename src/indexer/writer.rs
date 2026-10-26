@@ -23,13 +23,13 @@ pub fn write_run(
 ) -> io::Result<()> {
     let order = sorter.sort(postings)?;
     #[cfg(any(feature = "gpu-sort", test))]
-    if let PostingOrder::Indices(indices) = &order {
-        if indices.len() != postings.len() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Posting order length does not match batch",
-            ));
-        }
+    if let PostingOrder::Indices(indices) = &order
+        && indices.len() != postings.len()
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Posting order length does not match batch",
+        ));
     }
     let file = File::create(file_path)?;
     let mut writer = BufWriter::new(file);

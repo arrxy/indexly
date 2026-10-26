@@ -1,5 +1,5 @@
-use search_engine::index::{PageTable, PassageStore, prepare_passages};
-use search_engine::retrieval::{Bm25, QueryMode, SearchEngine};
+use indexly::index::{PageTable, PassageStore, prepare_passages};
+use indexly::retrieval::{Bm25, QueryMode, SearchEngine};
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
@@ -399,7 +399,7 @@ fn empty_and_zero_token_documents_remain_searchable_without_division_errors() {
 
 #[test]
 fn bm25_validates_parameters_and_known_term_contributions() {
-    let stats = search_engine::index::CollectionStats {
+    let stats = indexly::index::CollectionStats {
         document_count: 4,
         total_doc_length: 20,
         tokenizer_id: 1,

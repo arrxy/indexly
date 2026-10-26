@@ -20,7 +20,7 @@ fn sink_errors_and_truncated_input_propagate_without_deleting_sources() {
     bytes.extend_from_slice(&1_u32.to_le_bytes());
     std::fs::write(&source, &bytes).unwrap();
     let mut calls = 0;
-    let result = merge_into(&[source.clone()], |_, _, _| {
+    let result = merge_into(std::slice::from_ref(&source), |_, _, _| {
         calls += 1;
         Err(io::Error::new(
             io::ErrorKind::PermissionDenied,

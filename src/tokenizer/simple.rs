@@ -1,4 +1,4 @@
-use crate::tokenizer::tokenizer::Tokenizer;
+use super::Tokenizer;
 pub struct SimpleTokenizer;
 
 impl Tokenizer for SimpleTokenizer {
