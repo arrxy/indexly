@@ -2,3 +2,4 @@
 /output
 /data
 /benchmarks
+*.tsv

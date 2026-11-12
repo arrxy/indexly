@@ -1,6 +1,6 @@
 /* Exact document-at-a-time retrieval over compressed posting cursors.
 AND aligns cursors (rarest term first); OR visits the union in doc-ID order.
-Only ten hits and one decoded block per term are retained. Equal scores
+Only the requested hits and one decoded block per term are retained. Equal scores
 are ordered by internal doc ID for deterministic results. */
 use super::{bm25::Bm25, snippet};
 use crate::compression::Simple9;
@@ -10,6 +10,19 @@ use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
+
+pub(super) const DEFAULT_TOP_K: usize = 10;
+const MAX_TOP_K: usize = 1_000;
+
+pub(super) fn validate_top_k(top_k: usize) -> io::Result<()> {
+    if (1..=MAX_TOP_K).contains(&top_k) {
+        return Ok(());
+    }
+    Err(io::Error::new(
+        io::ErrorKind::InvalidInput,
+        format!("Top K must be between 1 and {MAX_TOP_K}"),
+    ))
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// Boolean matching mode for exact BM25 retrieval.
@@ -51,7 +64,7 @@ pub struct TermScore {
     pub score: f64,
 }
 #[derive(Debug)]
-/// One of at most ten hits, ranked by score descending then internal ID ascending.
+/// One of the retained hits, ranked by score descending then internal ID ascending.
 pub struct SearchHit {
     /// Internal zero-based row-order document ID.
     pub doc_id: u32,
@@ -90,9 +103,9 @@ impl PartialOrd for SearchHit {
 pub struct SearchResult {
     /// Distinct normalized query terms in query order.
     pub terms: Vec<String>,
-    /// Up to ten ranked hits.
+    /// Ranked hits up to the requested limit.
     pub hits: Vec<SearchHit>,
-    /// Total Boolean matches, including those outside the retained top ten.
+    /// Total Boolean matches, including those outside the retained results.
     pub matched_documents: u64,
 }
 struct TermCursor {
@@ -211,6 +224,17 @@ impl SearchEngine {
     /// Score all Boolean matches exactly and retain the best ten. At most 64
     /// distinct normalized terms are accepted; duplicate terms count once.
     pub fn search(&mut self, query: &str, mode: QueryMode) -> io::Result<SearchResult> {
+        self.search_top_k(query, mode, DEFAULT_TOP_K)
+    }
+
+    /// Score all matches and retain up to `top_k` hits. Accepts limits from 1 to 1,000.
+    pub fn search_top_k(
+        &mut self,
+        query: &str,
+        mode: QueryMode,
+        top_k: usize,
+    ) -> io::Result<SearchResult> {
+        validate_top_k(top_k)?;
         let mut seen = HashSet::new();
         let terms: Vec<String> = SimpleTokenizer
             .tokenize(query)
@@ -251,7 +275,7 @@ impl SearchEngine {
         if cursors.is_empty() {
             return Ok(result);
         }
-        let mut heap = BinaryHeap::with_capacity(11);
+        let mut heap = BinaryHeap::with_capacity(top_k + 1);
         let mut frequencies = vec![0; result.terms.len()];
         if mode == QueryMode::Conjunctive {
             cursors.sort_by_key(|c| c.reader.doc_freq());
@@ -273,7 +297,7 @@ impl SearchEngine {
                         .frequency()
                         .ok_or_else(|| invalid("Posting cursor has no frequency"))?;
                 }
-                self.consider(target, &result.terms, &idfs, &frequencies, &mut heap)?;
+                self.consider(target, &result.terms, &idfs, &frequencies, &mut heap, top_k)?;
                 result.matched_documents += 1;
                 let Some(next) = target.checked_add(1) else {
                     break;
@@ -294,7 +318,7 @@ impl SearchEngine {
                             .ok_or_else(|| invalid("Posting cursor has no frequency"))?;
                     }
                 }
-                self.consider(doc_id, &result.terms, &idfs, &frequencies, &mut heap)?;
+                self.consider(doc_id, &result.terms, &idfs, &frequencies, &mut heap, top_k)?;
                 result.matched_documents += 1;
                 for cursor in &mut cursors {
                     if cursor.current == Some(doc_id) {
@@ -329,6 +353,7 @@ impl SearchEngine {
         idfs: &[f64],
         frequencies: &[u32],
         heap: &mut BinaryHeap<SearchHit>,
+        top_k: usize,
     ) -> io::Result<()> {
         let entry = self
             .page_table
@@ -342,7 +367,7 @@ impl SearchEngine {
             .zip(idfs)
             .map(|(&tf, &idf)| self.bm25.score(tf, entry.doc_length, idf))
             .sum();
-        if heap.len() == 10
+        if heap.len() == top_k
             && heap.peek().is_some_and(|worst| {
                 score < worst.score || (score == worst.score && doc_id >= worst.doc_id)
             })
@@ -366,7 +391,7 @@ impl SearchEngine {
             term_scores,
             snippet: String::new(),
         });
-        if heap.len() > 10 {
+        if heap.len() > top_k {
             heap.pop();
         }
         Ok(())

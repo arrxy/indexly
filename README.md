@@ -87,7 +87,9 @@ applications should stage generations and coordinate publication/readers.
 
 ## Retrieval and limits
 
-- Exact BM25 top 10; AND requires every distinct term, OR accepts any term.
+- Exact BM25 with 10 hits by default. Set a limit from 1 to 1,000 with
+  `SearchEngine::search_top_k` or `--top-k`. AND requires every distinct
+  term, and OR accepts any term.
 - Defaults: `k1=1.2`, `b=0.75`; override with `SearchOptions`.
 - At most 64 distinct normalized query terms; repeated terms count once.
 - Equal scores break by internal document ID. Hits include external passage ID,

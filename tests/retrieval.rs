@@ -181,6 +181,12 @@ fn daat_and_or_top_ten_match_independent_exhaustive_bm25() {
                 expected.push((doc_id as u32, parts.iter().sum::<f64>(), parts));
             }
             expected.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+            let full = engine.search_top_k(query, mode, 1_000).unwrap();
+            assert_eq!(full.hits.len(), expected.len());
+            for (hit, (doc_id, score, _)) in full.hits.iter().zip(&expected) {
+                assert_eq!(hit.doc_id, *doc_id, "{query} {mode:?}");
+                assert!((hit.score - score).abs() < 1e-10);
+            }
             let result = engine.search(query, mode).unwrap();
             assert_eq!(result.terms, terms);
             assert_eq!(
@@ -250,6 +256,60 @@ fn process_handles_queries_mode_changes_errors_and_eof_without_restart() {
     ));
     assert_eq!(output.matches("Query:").count(), 2);
     assert!(!output.contains("snippet:"));
+}
+
+#[test]
+fn batch_exports_ranked_passage_ids_without_the_source_tsv() {
+    let root = TestDir::new();
+    let (input, index, _) = fixture(&root);
+    fs::remove_file(input).unwrap();
+    let queries = root.0.join("queries.tsv");
+    fs::write(
+        &queries,
+        "001\t/rust\tsearch\r\n002\tunknownzz\r\n003\tfiller",
+    )
+    .unwrap();
+
+    let run_batch = |extra_args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_search"))
+            .args([
+                "--index",
+                index.to_str().unwrap(),
+                "--queries",
+                queries.to_str().unwrap(),
+            ])
+            .args(extra_args)
+            .output()
+            .unwrap()
+    };
+    let output = success(run_batch(&["--top-k", "20"]));
+    let mut engine = SearchEngine::open(&index, None, false, 1.2, 0.75).unwrap();
+    let expected: Vec<String> = [("001", "/rust\tsearch"), ("003", "filler")]
+        .into_iter()
+        .flat_map(|(id, query)| {
+            let result = engine
+                .search_top_k(query, QueryMode::Disjunctive, 20)
+                .unwrap();
+            assert_eq!(result.hits.len(), 20);
+            result.hits.into_iter().enumerate().map(move |(rank, hit)| {
+                format!("{id}\t{}\t{}\t{}", hit.passage_id, rank + 1, hit.score)
+            })
+        })
+        .collect();
+    assert_eq!(output.lines().collect::<Vec<_>>(), expected);
+
+    let output = success(run_batch(&[]));
+    let default_hits = expected[..10].iter().chain(&expected[20..30]);
+    assert!(output.lines().eq(default_hits));
+
+    for limit in ["0", "1001"] {
+        let output = run_batch(&["--top-k", limit]);
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("Top K must be between 1 and 1000")
+        );
+    }
 }
 
 #[test]

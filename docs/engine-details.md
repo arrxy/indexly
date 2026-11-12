@@ -22,21 +22,22 @@ OR> /quit
 The default mode is disjunctive (OR). Use `--mode and` to start conjunctive.
 `search-engine search --index <directory>` is an equivalent entry point.
 
-For each query the processor returns the **top 10** passages, sorted by
-BM25 score, with original passage ID, internal doc ID, every normalized
-query term's score and frequency, and a query-dependent snippet. Terms
+By default the processor returns the **top 10** passages per query. Use
+`--top-k` to request 1 to 1,000. Hits are sorted by BM25 score and include
+the original passage ID, internal doc ID, each normalized query term's
+score and frequency, and a query-dependent snippet. Terms
 absent from an OR result have score zero. Repeated normalized query terms
 are counted once. Equal scores use internal doc ID as a deterministic tie
 break. Snippets highlight matching whole words in `[brackets]` and prefer
-windows covering more query terms; they are generated only for the final
-10 results. Normalization matches indexing, including Unicode lowercase.
+windows covering more query terms. The engine generates snippets for the
+retained hits. Normalization matches indexing, including Unicode lowercase.
 
 Both modes use document-at-a-time traversal. AND aligns forward cursors,
 starting with the rarest term; OR visits their union in doc-ID order. Each
 cursor uses the persisted block directory to gallop past irrelevant blocks
-and decodes one selected block at a time. A heap retains only ten results;
-posting lists stay on disk. This implementation performs exact scoring,
-without approximate pruning.
+and decodes one selected block at a time. A heap retains up to the requested
+number of results, and posting lists stay on disk. The engine scores all
+Boolean matches exactly.
 
 BM25 uses `ln(1 + (N - df + 0.5)/(df + 0.5))` for IDF and defaults to
 `k1=1.2, b=0.75`. Override these with `--k1` and `--b`. Collection counts
@@ -44,7 +45,18 @@ include documents with no tokens. At most 64 distinct terms are allowed per
 query. Query time includes result formatting and snippets; index loading is
 reported separately.
 
-### Passage offsets and existing indexes
+## Batch retrieval
+
+```sh
+./target/release/search --index ./output/ps3/bm25 \
+  --queries queries.tsv --top-k 1000 > bm25.tsv
+```
+
+Batch input is a headerless TSV with query ID and query text. The process
+opens the index once and disables snippets. It writes one TSV row per hit
+with query ID, original passage ID, rank starting at 1, and BM25 score.
+
+## Passage offsets and existing indexes
 
 New builds automatically save a **PTB2** page table with original passage
 ID, token count, TSV row byte offset and row byte length. The header records
@@ -68,7 +80,7 @@ moves, specify `search --index <directory> --dataset <new-path>`.
 Startup checks index counts and tokenizer identity; source-size/mtime
 mismatches produce errors rather than silently displaying incorrect text.
 
-### Separate assignment stages
+## Separate assignment stages
 
 Three executables support disk outputs between stages:
 
