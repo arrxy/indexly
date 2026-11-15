@@ -1,0 +1,220 @@
+\documentclass[10pt,letterpaper,twocolumn]{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern,microtype,amsmath,booktabs,graphicx,caption,xcolor,hyperref}
+\usepackage[margin=0.68in,columnsep=0.25in]{geometry}
+\usepackage[compact]{titlesec}
+
+\definecolor{ink}{HTML}{253D56}
+\hypersetup{colorlinks=true,allcolors=ink,
+  pdftitle={Lexical and Dense Passage Retrieval on MS MARCO},
+  pdfauthor={Aritro}}
+\captionsetup{font=small,labelfont=bf,labelsep=period,skip=5pt}
+\setlength{\dblfloatsep}{8pt}
+\setlength{\floatsep}{8pt}
+\setlength{\intextsep}{8pt}
+\setlength{\textfloatsep}{10pt}
+\titlespacing*{\section}{0pt}{10pt plus 2pt}{5pt}
+\graphicspath{{analysis/}}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{3pt plus 1pt}
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.10}
+\raggedbottom
+
+\title{\bfseries Lexical and Dense Passage Retrieval\\on MS MARCO}
+\author{Aritro \\ \small NYU Tandon School of Engineering}
+\date{\small CS 6913 \enspace $\cdot$ \enspace Assignment 3}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We compare BM25, FAISS HNSW, and BM25 with embedding reranking on the same one million MS MARCO passages. Reranking led on all reported quality metrics on TREC 2019 and MS MARCO dev. HNSW led on Recall@100 and both NDCG cutoffs on TREC 2020. In three 43-query batch trials, HNSW had the shortest median wall time and BM25 used the least query memory. Reordering only the first 10 to 100 BM25 hits improved the mean of every metric examined in the depth sweep.
+\end{abstract}
+
+\section{Collection and retrieval systems}
+We filtered the original passage collection by the supplied IDs and rebuilt the compressed Rust BM25 index on the resulting one million passages. The supplied passage and query embeddings have 384 dimensions. Every system returns original MS MARCO passage IDs.
+
+\textbf{BM25.} The engine scores passages that contain any normalized query term, with $k_1=1.2$ and $b=0.75$ \cite{bm25}. Batch mode opens the index once, disables snippets, and returns up to 1,000 ranked hits per query.
+
+\textbf{HNSW.} FAISS \texttt{IndexHNSWFlat} searches the full subset by raw inner product \cite{hnsw,faiss}. The build converts passage vectors from float16 to float32 and associates each vector with its passage ID. The graph uses $M=8$ and \texttt{efConstruction}=100. Search uses \texttt{efSearch}=200 and requests up to 1,000 hits.
+
+\textbf{BM25 reranking.} We compute the raw dot product between the query embedding and each BM25 candidate, then sort in descending score order. A stable sort keeps BM25 order for equal scores. The main comparison reranks all available candidates up to 1,000.
+
+\section{Evaluation protocol}
+The three splits contain 43 TREC 2019 queries (\texttt{eval.one}), 54 TREC 2020 queries (\texttt{eval.two}), and 1,000 MS MARCO development queries (\texttt{dev}). All nine runs covered every judged query. We average per-query scores with equal weight and assign zero gain to unjudged passages.
+
+For MRR@10 and Recall@100, TREC grades 2 and 3 count as relevant \cite{trec19,trec20}, and dev uses label 1. NDCG uses the original graded judgments as linear gains. We report NDCG@10 and NDCG@100 on the TREC splits and MAP on dev. Dev average precision uses the entire saved ranking, up to 1,000 hits per query.
+
+\begin{table}[!ht]
+\centering\small
+\caption{Quality on the two graded TREC splits.}
+\label{tab:trec}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+System & MRR@10 & R@100 & N@10 & N@100\\
+\midrule
+\multicolumn{5}{@{}l}{\textit{TREC 2019 (43 queries)}}\\
+BM25 & .5923 & .5525 & .4497 & .5322\\
+HNSW & .8050 & .6209 & .6777 & .6425\\
+BM25 reranked & \textbf{.8283} & \textbf{.6452} & \textbf{.7027} & \textbf{.6620}\\
+\addlinespace[3pt]
+\multicolumn{5}{@{}l}{\textit{TREC 2020 (54 queries)}}\\
+BM25 & .6290 & .6179 & .4912 & .5123\\
+HNSW & .7797 & \textbf{.7356} & \textbf{.6632} & \textbf{.6397}\\
+BM25 reranked & \textbf{.7817} & .7105 & .6578 & .6331\\
+\bottomrule
+\end{tabular}
+\par\smallskip
+{\footnotesize R denotes Recall and N denotes NDCG.}
+\end{table}
+
+\begin{table}[!ht]
+\centering\small
+\caption{Quality on MS MARCO dev (1,000 queries).}
+\label{tab:dev}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+System & MRR@10 & Recall@100 & MAP\\
+\midrule
+BM25 & .3940 & .7960 & .3967\\
+HNSW & .5512 & .8732 & .5494\\
+BM25 reranked & \textbf{.5783} & \textbf{.8873} & \textbf{.5755}\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Retrieval quality}
+Reranking improved TREC 2019 NDCG@10 by 0.2530 over BM25 and led HNSW on all four metrics (Table~\ref{tab:trec}). On dev, MAP increased from 0.3967 for BM25 to 0.5494 for HNSW and 0.5755 for reranking (Table~\ref{tab:dev}).
+
+On TREC 2020, HNSW retrieved a larger share of relevant passages within its top 100 (0.7356 versus 0.7105 for reranking) and led both NDCG cutoffs. Reranking led MRR@10 by 0.0020 on 54 queries. That difference is descriptive.
+
+Reranking can promote only passages already in the BM25 candidate set. Sorting those candidates with perfect knowledge of the judgments would cap mean Recall@100 at 0.7807, 0.8323, and 0.9082 on TREC 2019, TREC 2020, and dev, respectively. HNSW can retrieve passages outside that set.
+
+For query \texttt{527433}, about types of dysarthria in cerebral palsy, all three systems ranked passage \texttt{8617271} first (grade 3). BM25 put a passage about types of cerebral palsy second (grade 1). HNSW and reranking moved a passage discussing dysarthria across neurological conditions into second place (grade 2).
+
+\section{Reranking depth}
+For $k\in\{10,20,\ldots,100\}$, we reordered the first $k$ BM25 hits by raw dot product and retained the original BM25 order after rank $k$. The candidate set and overall run depth were fixed. For each metric, we averaged the per-query difference from the original BM25 ranking. Figure~\ref{fig:depth} shows MRR@10 for all splits, both NDCG cutoffs for the graded splits, and MAP for dev.
+
+The TREC 2019 MRR@10 gain peaked at $+0.2517$ with $k=50$ and fell to $+0.2321$ at $k=100$. Its NDCG@100 gain reached $+0.0661$ at $k=100$. Between $k=10$ and $k=100$, TREC 2020 MRR@10 gains rose from $+0.0397$ to $+0.1296$, and dev MAP gains rose from $+0.1004$ to $+0.1591$. A deeper pool can promote additional relevant passages, but those candidates can also displace results that were already relevant. The preferred depth depends on the split and metric.
+
+
+
+\section{Quality by query length}
+We counted contiguous alphanumeric tokens, including repeated words, and averaged results for each exact length. Figures~\ref{fig:trec-length} and \ref{fig:dev-length} compare BM25, HNSW, and the full reranker. Hollow markers indicate groups with fewer than five queries.
+
+On dev, comparing the 169 four-token queries with the 92 eight-token queries, mean MRR@10 fell from 0.410 to 0.328 for BM25, from 0.608 to 0.436 for HNSW, and from 0.646 to 0.456 for reranking. The TREC curves vary by length, and several groups are small. TREC 2020 has just one eight-token query, so the mean at that length describes a single example.
+
+
+
+
+
+\section{Efficiency}
+We used one Apple Silicon Mac with 10 logical CPUs, Python 3.12.12, and FAISS 1.16.0. We timed one build per index and excluded compilation. We measured all systems on the same 43 TREC 2019 queries at depth 1,000. Batch results are medians of three fresh processes after warmup, with trial order rotated. Batch wall time includes startup, loading, retrieval, and writing. Memory is peak resident set size (RSS).
+
+\begin{table}[!ht]
+\centering\small
+\caption{Index construction on one million passages.}
+\label{tab:build}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Index & Time (s) & Peak RSS (MiB) & Size (MiB)\\
+\midrule
+BM25 & 7.09 & 1,476.4 & 126.4\\
+HNSW & 71.04 & 2,271.4 & 1,549.3\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[!ht]
+\centering\small
+\caption{Median batch cost for 43 queries.}
+\label{tab:batch}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+Query path & Time (s) & Peak RSS (MiB)\\
+\midrule
+BM25 & 1.471 & 148.8\\
+HNSW & 0.908 & 1,546.1\\
+Rerank saved candidates & 0.768 & 1,217.6\\
+BM25 and reranking & 2.329 & 1,217.6\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+HNSW was fastest for the full 43-query batch, with a roughly tenfold increase in query RSS and a roughly twelvefold increase in persisted index size over BM25 (Tables~\ref{tab:build} and \ref{tab:batch}). Reranking reused BM25 and 927.0 MiB of supplied embedding files. Its median vector and ID-map loading time was 0.591 seconds, and scoring, sorting, and writing took 0.066 seconds. The full pipeline ran BM25 and reranking sequentially, so its peak RSS is the larger of the two process peaks.
+
+Query embeddings were supplied. The reported wall times capture the batch workflow on this machine. Single-query latency and cold-cache performance require separate measurements. Quality comes from the persisted runs, and efficiency comes from fresh builds with the same settings.
+
+\section{Reproduction}
+From the repository root, run the commands below with the supplied MS MARCO files in \texttt{data/ms\_marco/} and the full passage collection at \texttt{data/data\_set.tsv}. The three retrieval commands produce all splits by default. Add \texttt{--split eval.one} to each retrieval command and to the evaluator for the 43-query demo.
+
+{\footnotesize
+\begin{verbatim}
+python3 scripts/1_prepare_ps3_subset.py
+python3 scripts/2_build_ps3_bm25.py
+python3 scripts/3_run_ps3_bm25.py
+uv run --python 3.12 scripts/4_run_ps3_hnsw.py build
+uv run --python 3.12 scripts/4_run_ps3_hnsw.py search
+uv run --python 3.12 scripts/5_run_ps3_rerank.py
+python3 scripts/6_evaluate_ps3.py
+uv run --python 3.12 scripts/7_benchmark_ps3.py
+uv run --python 3.12 scripts/8_analyze_ps3.py
+\end{verbatim}
+}
+
+\begin{thebibliography}{9}\footnotesize
+\setlength{\itemsep}{1pt}
+\setlength{\parskip}{0pt}
+\bibitem{bm25}
+S.~Robertson and H.~Zaragoza.
+\newblock The probabilistic relevance framework: BM25 and beyond.
+\newblock \href{https://doi.org/10.1561/1500000019}{\emph{Foundations and Trends in Information Retrieval}}, 2009.
+
+\bibitem{hnsw}
+Y.~A. Malkov and D.~A. Yashunin.
+\newblock Efficient and robust approximate nearest neighbor search using hierarchical navigable small world graphs.
+\newblock \href{https://arxiv.org/abs/1603.09320}{arXiv:1603.09320}, 2018.
+
+\bibitem{faiss}
+FAISS contributors.
+\newblock \href{https://github.com/facebookresearch/faiss/wiki/Faiss-indexes}{FAISS indexes and HNSW parameters}.
+
+\bibitem{trec19}
+NIST.
+\newblock \href{https://trec.nist.gov/data/deep2019.html}{TREC 2019 Deep Learning Track passage judgments}.
+
+\bibitem{trec20}
+NIST.
+\newblock \href{https://trec.nist.gov/data/deep2020.html}{TREC 2020 Deep Learning Track passage judgments}.
+\end{thebibliography}
+
+
+\clearpage
+\onecolumn
+\section*{Figures}
+\captionsetup{hypcap=false}
+{%
+\centering
+\includegraphics[width=0.73\textwidth]{reranking-cutoff.png}
+\captionof{figure}{Mean change from BM25 as the number of reranked hits increases from 10 to 100. The dashed line marks the BM25 baseline.}
+\label{fig:depth}
+\par}
+
+\vspace{5pt}
+{%
+\centering
+\includegraphics[width=0.73\textwidth]{query-length-trec.png}
+\captionof{figure}{Mean MRR@10, NDCG@10, and NDCG@100 by exact query length on the graded TREC splits.}
+\label{fig:trec-length}
+\par}
+
+\vspace{5pt}
+{%
+\centering
+\includegraphics[width=0.72\textwidth]{query-length-dev.png}
+\captionof{figure}{Mean MRR@10 and MAP by exact query length on MS MARCO dev.}
+\label{fig:dev-length}
+\par}
+
+\end{document}

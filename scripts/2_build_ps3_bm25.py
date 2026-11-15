@@ -10,7 +10,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--passages", type=Path, default=REPO / "data/ps3/passages.tsv",
-        help="Filtered passage TSV from prepare_ps3_subset.py (default: %(default)s)",
+        help="Filtered passage TSV from 1_prepare_ps3_subset.py (default: %(default)s)",
     )
     parser.add_argument(
         "--output", type=Path, default=REPO / "output/ps3/bm25",
