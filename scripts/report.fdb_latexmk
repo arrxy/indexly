@@ -1,6 +1,6 @@
 # Fdb version 4
-["pdflatex"] 1794678755.96668 "/Users/aritro/Aritro/rustlab/search-engine/scripts/report.tex" "report.pdf" "report" 1794678756.95686 0
-  "/Users/aritro/Aritro/rustlab/search-engine/scripts/report.tex" 1794678754.583 11423 e8aaae51bcbfe2106ee10366fe45b1b5 ""
+["pdflatex"] 1794832934.95835 "/Users/aritro/Aritro/rustlab/search-engine/scripts/report.tex" "report.pdf" "report" 1794832935.88015 0
+  "/Users/aritro/Aritro/rustlab/search-engine/scripts/report.tex" 1794832933.80558 11443 1ded1b12ffffe9517d2a92b4acc507df ""
   "/usr/local/texlive/2025/texmf-dist/fonts/enc/dvips/lm/lm-ec.enc" 1254269338 2375 baa924870cfb487815765f9094cf3728 ""
   "/usr/local/texlive/2025/texmf-dist/fonts/enc/dvips/lm/lm-mathit.enc" 1202520719 2405 5dcf2c1b967ee25cc46c58cd52244aed ""
   "/usr/local/texlive/2025/texmf-dist/fonts/enc/dvips/lm/lm-mathsy.enc" 1202520719 2840 216e6e45ad352e2456e1149f28885bee ""
@@ -129,9 +129,9 @@
   "/usr/local/texlive/2025/texmf.cnf" 1741450484 577 418a7058ec8e006d8704f60ecd22c938 ""
   "query-length-dev.png" 1794678112.3972 114226 e4d9533a25a0e1cf64a01838708683fe ""
   "query-length-trec.png" 1794678112.39678 209686 31c7361421ace5e0cc4740cb70ad45f2 ""
-  "report.aux" 1794678756.89134 3172 633ba1803230fcb5dcc0bf1534fa411a "pdflatex"
-  "report.out" 1794678756.89184 968 78f66bd00fb9060ebae83b8497f90326 "pdflatex"
-  "report.tex" 1794678754.583 11423 e8aaae51bcbfe2106ee10366fe45b1b5 ""
+  "report.aux" 1794832935.81655 3172 633ba1803230fcb5dcc0bf1534fa411a "pdflatex"
+  "report.out" 1794832935.81703 968 78f66bd00fb9060ebae83b8497f90326 "pdflatex"
+  "report.tex" 1794832933.80558 11443 1ded1b12ffffe9517d2a92b4acc507df ""
   "reranking-cutoff.png" 1794678112.39617 232887 f34b4c3249c7510e21fd3e13ed950f95 ""
   (generated)
   "report.aux"

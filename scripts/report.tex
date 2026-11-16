@@ -91,7 +91,7 @@ On TREC 2020, HNSW retrieved a larger share of relevant passages within its top 
 
 Reranking can promote only passages already in the BM25 candidate set. Sorting those candidates with perfect knowledge of the judgments would cap mean Recall@100 at 0.7807, 0.8323, and 0.9082 on TREC 2019, TREC 2020, and dev, respectively. HNSW can retrieve passages outside that set.
 
-For query \texttt{527433}, about types of dysarthria in cerebral palsy, all three systems ranked passage \texttt{8617271} first (grade 3). BM25 put a passage about types of cerebral palsy second (grade 1). HNSW and reranking moved a passage discussing dysarthria across neurological conditions into second place (grade 2).
+% For query \texttt{527433}, about types of dysarthria in cerebral palsy, all three systems ranked passage \texttt{8617271} first (grade 3). BM25 put a passage about types of cerebral palsy second (grade 1). HNSW and reranking moved a passage discussing dysarthria across neurological conditions into second place (grade 2).
 
 \section{Reranking depth}
 For $k\in\{10,20,\ldots,100\}$, we reordered the first $k$ BM25 hits by raw dot product and retained the original BM25 order after rank $k$. The candidate set and overall run depth were fixed. For each metric, we averaged the per-query difference from the original BM25 ranking. Figure~\ref{fig:depth} shows MRR@10 for all splits, both NDCG cutoffs for the graded splits, and MAP for dev.

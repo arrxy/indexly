@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare the saved PS3 rankings against the assignment's relevance judgments."""
+"""Compare the saved PS3 rankings"""
 
 import argparse
 from dataclasses import dataclass
@@ -39,11 +39,11 @@ def run_rows(source):
 
 @dataclass
 class Metrics:
-    mrr10: float = 0.0
-    recall100: float = 0.0
-    ndcg10: float = 0.0
-    ndcg100: float = 0.0
-    ap: float = 0.0
+    mrr10: float = 0.0 # Mean Reciprocal Rank - MRR@10 averages 1 / rank of the first relevant hit per query, using 0 if none appears in the top 10.
+    recall100: float = 0.0 # Recall@100 averages the proportion of relevant hits in the top 100 per query.
+    ndcg10: float = 0.0 # NDCG@10 averages the normalized discounted cumulative gain in the top 10 per query.
+    ndcg100: float = 0.0 # NDCG@100 averages the normalized discounted cumulative gain in the top 100 per query.
+    ap: float = 0.0 # Average Precision averages the precision at each relevant hit per query.
 
 
 def dcg(grades: list[int]) -> float:

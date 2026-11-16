@@ -1,7 +1,4 @@
-#!/usr/bin/env python3
-# /// script
-# dependencies = ["h5py==3.15.1", "numpy==2.0.0"]
-# ///
+
 """Rerank PS3 BM25 candidates by the raw dot product of their embeddings."""
 
 import argparse

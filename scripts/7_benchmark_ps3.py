@@ -1,7 +1,3 @@
-#!/usr/bin/env python3
-# /// script
-# dependencies = ["faiss-cpu==1.16.0", "h5py==3.16.0", "numpy==2.5.4"]
-# ///
 """Measure build and eval.one batch costs for the three PS3 search systems."""
 
 import argparse
