@@ -3,3 +3,5 @@
 /data
 /benchmarks
 *.tsv
+/.venv
+scripts/__pycache__/

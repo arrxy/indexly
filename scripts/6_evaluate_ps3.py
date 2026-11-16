@@ -106,10 +106,11 @@ def evaluate_run(
 
 
 def evaluation_table(data_dir: Path, runs_dir: Path, splits: tuple[str, ...]) -> str:
-    lines = [
-        "| Split | System | Judged queries | Queries with hits | MRR@10 | Recall@100 | NDCG@10 | NDCG@100 | MAP |",
-        "|---|---|---:|---:|---:|---:|---:|---:|---:|",
-    ]
+    headers = (
+        "Split", "System", "Judged queries", "Queries with hits",
+        "MRR@10", "Recall@100", "NDCG@10", "NDCG@100", "MAP",
+    )
+    rows = [headers]
     for split in splits:
         graded = split != "dev"
         qrels = read_qrels(data_dir / f"qrels.{split}.tsv", graded)
@@ -118,10 +119,22 @@ def evaluation_table(data_dir: Path, runs_dir: Path, splits: tuple[str, ...]) ->
             ndcg10 = f"{result.ndcg10:.4f}" if graded else "—"
             ndcg100 = f"{result.ndcg100:.4f}" if graded else "—"
             mean_ap = f"{result.ap:.4f}" if not graded else "—"
-            lines.append(
-                f"| {split} | {name} | {len(qrels):,} | {with_hits:,} | {result.mrr10:.4f} | "
-                f"{result.recall100:.4f} | {ndcg10} | {ndcg100} | {mean_ap} |"
-            )
+            rows.append((
+                split, name, f"{len(qrels):,}", f"{with_hits:,}",
+                f"{result.mrr10:.4f}", f"{result.recall100:.4f}", ndcg10, ndcg100, mean_ap,
+            ))
+
+    widths = [max(map(len, column)) for column in zip(*rows)]
+    lines = []
+    for row in rows:
+        cells = [
+            cell.ljust(width) if column < 2 else cell.rjust(width)
+            for column, (cell, width) in enumerate(zip(row, widths))
+        ]
+        lines.append("| " + " | ".join(cells) + " |")
+    separator = ["-" * width if column < 2 else "-" * (width - 1) + ":"
+                 for column, width in enumerate(widths)]
+    lines.insert(1, "| " + " | ".join(separator) + " |")
     lines.extend([
         "",
         "Metrics follow the saved ranks. Each judged query has equal weight, including queries with zero hits.",
