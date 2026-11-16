@@ -22,10 +22,7 @@ def main() -> int:
         "cargo", "run", "--release", "--locked", "--bin", "search-engine", "--",
         str(args.passages.resolve()), "--output", str(args.output.resolve()), "--sort", "cpu",
     ]
-    try:
-        return subprocess.run(command, cwd=REPO, check=False).returncode
-    except OSError as error:
-        parser.exit(1, f"{parser.prog}: could not run Cargo: {error}\n")
+    return subprocess.run(command, cwd=REPO, check=False).returncode
 
 
 if __name__ == "__main__":

@@ -30,20 +30,11 @@ MARKERS = ("o", "s", "^")
 TOKEN = re.compile(r"[^\W_]+")
 
 
-def read_rankings(path, judgments):
+def read_rankings(path):
     rankings = {}
     with path.open(encoding="utf-8") as source:
-        for query, hits in groupby(evaluation.run_rows(source, path), key=lambda row: row[0]):
-            if query in rankings or query not in judgments:
-                raise ValueError(f"{path}: repeated or unexpected query {query}")
-            ordered = []
-            seen = set()
-            for expected_rank, (_, passage, rank) in enumerate(hits, start=1):
-                if rank != expected_rank or passage in seen:
-                    raise ValueError(f"{path}: invalid ranks or duplicate passage for query {query}")
-                ordered.append(passage)
-                seen.add(passage)
-            rankings[query] = ordered
+        for query, passage in evaluation.run_rows(source):
+            rankings.setdefault(query, []).append(passage)
     return rankings
 
 
@@ -53,12 +44,7 @@ def query_lengths(path, judgments):
         for line in source:
             query, _, text = line.partition("\t")
             if query in judgments:
-                if query in lengths:
-                    raise ValueError(f"{path}: duplicate query {query}")
                 lengths[query] = len(TOKEN.findall(text))
-    missing = judgments.keys() - lengths.keys()
-    if missing:
-        raise ValueError(f"{path}: missing query text for {len(missing)} judged IDs")
     return lengths
 
 
@@ -75,7 +61,7 @@ def analyze_split(split, data, runs):
     judgments = evaluation.read_qrels(data / f"qrels.{split}.tsv", graded)
     lengths = query_lengths(data / ("queries.eval.tsv" if graded else "queries.dev.tsv"), judgments)
     rankings = {
-        key: read_rankings(runs / f"{key}.{split}.tsv", judgments) for key, _ in evaluation.SYSTEMS
+        key: read_rankings(runs / f"{key}.{split}.tsv") for key, _ in evaluation.SYSTEMS
     }
     deltas = {k: defaultdict(list) for k in CUTOFFS}
     baseline = defaultdict(list)
@@ -189,19 +175,16 @@ def main():
     parser.add_argument("--runs-dir", type=Path, default=evaluation.REPO / "output/ps3/runs")
     parser.add_argument("--output-dir", type=Path, default=evaluation.REPO / "output/ps3/analysis")
     args = parser.parse_args()
-    try:
-        results = {split: analyze_split(split, args.data_dir, args.runs_dir) for split in evaluation.SPLITS}
-        args.output_dir.mkdir(parents=True, exist_ok=True)
-        (args.output_dir / "plot-data.json").write_text(
-            json.dumps(results, indent=2) + "\n", encoding="utf-8",
-        )
-        with plt.rc_context({"font.family": "DejaVu Sans", "font.size": 10, "axes.titleweight": "bold"}):
-            plot_cutoffs(results, args.output_dir / "reranking-cutoff.png")
-            plot_lengths(results, ("eval.one", "eval.two"), args.output_dir / "query-length-trec.png")
-            plot_lengths(results, ("dev",), args.output_dir / "query-length-dev.png")
-        print(f"Saved three plots and their data to {args.output_dir}")
-    except (OSError, ValueError) as error:
-        parser.exit(1, f"{parser.prog}: {error}\n")
+    results = {split: analyze_split(split, args.data_dir, args.runs_dir) for split in evaluation.SPLITS}
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    (args.output_dir / "plot-data.json").write_text(
+        json.dumps(results, indent=2) + "\n", encoding="utf-8",
+    )
+    with plt.rc_context({"font.family": "DejaVu Sans", "font.size": 10, "axes.titleweight": "bold"}):
+        plot_cutoffs(results, args.output_dir / "reranking-cutoff.png")
+        plot_lengths(results, ("eval.one", "eval.two"), args.output_dir / "query-length-trec.png")
+        plot_lengths(results, ("dev",), args.output_dir / "query-length-dev.png")
+    print(f"Saved three plots and their data to {args.output_dir}")
 
 
 if __name__ == "__main__":

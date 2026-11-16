@@ -1,7 +1,4 @@
-#!/usr/bin/env python3
-# /// script
 # dependencies = ["faiss-cpu==1.16.0", "h5py==3.16.0", "numpy==2.5.4"]
-# ///
 """Build and search the PS3 FAISS HNSW index using raw dot products."""
 
 import argparse
@@ -30,23 +27,15 @@ def positive_int(value: str) -> int:
     return number
 
 
-def embedding_datasets(source: h5py.File) -> tuple[h5py.Dataset, h5py.Dataset]:
-    ids = source["id"]
-    vectors = source["embedding"]
-    if ids.ndim != 1 or vectors.ndim != 2 or len(ids) != len(vectors) or not len(ids):
-        raise ValueError(f"{source.filename}: expected one ID per embedding")
-    return ids, vectors
-
-
 def build_index(args: argparse.Namespace) -> None:
     started = perf_counter()
     with h5py.File(args.data_dir / PASSAGE_EMBEDDINGS, "r") as source:
-        ids, vectors = embedding_datasets(source)
+        ids = source["id"]
+        vectors = source["embedding"]
         total, dimensions = vectors.shape
         graph = faiss.IndexHNSWFlat(dimensions, args.m, faiss.METRIC_INNER_PRODUCT)
         graph.hnsw.efConstruction = args.ef_construction
         index = faiss.IndexIDMap(graph)
-        seen_ids = set()
         print(
             f"Building HNSW for {total:,} passages with M={args.m}, "
             f"efConstruction={args.ef_construction}, threads={args.threads}",
@@ -55,10 +44,6 @@ def build_index(args: argparse.Namespace) -> None:
         for start in range(0, total, BUILD_BATCH_SIZE):
             stop = min(start + BUILD_BATCH_SIZE, total)
             ids_batch = ids[start:stop].astype(np.int64)
-            batch_ids = set(ids_batch.tolist())
-            if len(batch_ids) != len(ids_batch) or seen_ids & batch_ids or np.any(ids_batch < 0):
-                raise ValueError("Passage IDs must be unique nonnegative integers")
-            seen_ids.update(batch_ids)
             batch = np.asarray(vectors[start:stop], dtype=np.float32, order="C")
             index.add_with_ids(batch, ids_batch)
             if stop == total or stop % 100_000 == 0:
@@ -82,14 +67,6 @@ def search_split(
     qrels = args.data_dir / f"qrels.{split}.tsv"
     with qrels.open(encoding="utf-8") as source:
         query_ids = {line.split(maxsplit=1)[0] for line in source if line.strip()}
-    if not query_ids:
-        raise ValueError(f"{qrels}: no judged query IDs")
-    missing = query_ids - rows_by_id.keys()
-    if missing:
-        examples = ", ".join(sorted(missing)[:5])
-        raise ValueError(f"{qrels}: missing embeddings for {len(missing):,} queries ({examples})")
-
-    # h5py requires sorted row indices for indexed reads.
     ordered_ids = sorted(query_ids, key=rows_by_id.__getitem__)
     limit = min(args.top_k, index.ntotal)
     result_path = args.output_dir / f"hnsw.{split}.tsv"
@@ -126,12 +103,9 @@ def search_index(args: argparse.Namespace) -> None:
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     with h5py.File(args.data_dir / QUERY_EMBEDDINGS, "r") as source:
-        ids, vectors = embedding_datasets(source)
-        if vectors.shape[1] != index.d:
-            raise ValueError("Query and passage embedding dimensions differ")
+        ids = source["id"]
+        vectors = source["embedding"]
         rows_by_id = {query_id: row for row, query_id in enumerate(ids.asstr()[:])}
-        if len(rows_by_id) != len(ids):
-            raise ValueError(f"{source.filename}: duplicate query IDs")
         for split in (args.split,) if args.split else SPLITS:
             search_split(split, args, index, vectors, rows_by_id)
 
@@ -158,10 +132,7 @@ def main() -> None:
 
     args = parser.parse_args()
     faiss.omp_set_num_threads(args.threads)
-    try:
-        args.run(args)
-    except (KeyError, OSError, RuntimeError, ValueError) as error:
-        parser.exit(1, f"{parser.prog}: {error}\n")
+    args.run(args)
 
 
 if __name__ == "__main__":

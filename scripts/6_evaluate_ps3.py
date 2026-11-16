@@ -4,7 +4,7 @@
 import argparse
 from dataclasses import dataclass
 from itertools import groupby
-from math import isfinite, log2
+from math import log2
 from pathlib import Path
 
 
@@ -24,26 +24,17 @@ def read_qrels(path: Path, graded: bool) -> dict[str, dict[str, int]]:
                 raise ValueError(f"{path}:{line_number}: unexpected qrel format")
             query, passage, grade_text = fields[0], fields[-2], fields[-1]
             grade = int(grade_text)
-            if not 0 <= grade <= (3 if graded else 1):
-                raise ValueError(f"{path}:{line_number}: invalid relevance grade {grade}")
             passages = judgments.setdefault(query, {})
-            if passage in passages:
-                raise ValueError(f"{path}:{line_number}: duplicate query and passage judgment")
             passages[passage] = grade
     if not judgments:
         raise ValueError(f"{path}: no relevance judgments")
     return judgments
 
 
-def run_rows(source, path: Path):
-    for line_number, line in enumerate(source, start=1):
-        fields = line.rstrip("\r\n").split("\t")
-        if len(fields) != 4 or not fields[0] or not fields[1]:
-            raise ValueError(f"{path}:{line_number}: expected query ID, passage ID, rank, and score")
-        query, passage, rank, score = fields
-        if not isfinite(float(score)):
-            raise ValueError(f"{path}:{line_number}: score must be finite")
-        yield query, passage, int(rank)
+def run_rows(source):
+    for line in source:
+        query, passage, _, _ = line.rstrip("\r\n").split("\t")
+        yield query, passage
 
 
 @dataclass
@@ -92,20 +83,9 @@ def evaluate_run(
     seen_queries: set[str] = set()
 
     with path.open(encoding="utf-8") as source:
-        for query, hits in groupby(run_rows(source, path), key=lambda row: row[0]):
-            if query in seen_queries:
-                raise ValueError(f"{path}: query {query} appears in multiple groups")
-            if query not in judgments:
-                raise ValueError(f"{path}: query {query} has no judgments for this split")
+        for query, hits in groupby(run_rows(source), key=lambda row: row[0]):
             seen_queries.add(query)
-
-            ranked: list[str] = []
-            seen_passages: set[str] = set()
-            for expected_rank, (_, passage, rank) in enumerate(hits, start=1):
-                if rank != expected_rank or passage in seen_passages:
-                    raise ValueError(f"{path}: invalid ranks or duplicate passage for query {query}")
-                ranked.append(passage)
-                seen_passages.add(passage)
+            ranked = [passage for _, passage in hits]
 
             result = score_query(ranked, judgments[query], graded)
             totals.mrr10 += result.mrr10
@@ -158,12 +138,9 @@ def main() -> None:
     parser.add_argument("--runs-dir", type=Path, default=REPO / "output/ps3/runs")
     args = parser.parse_args()
 
-    try:
-        table = evaluation_table(
-            args.data_dir, args.runs_dir, (args.split,) if args.split else SPLITS,
-        )
-    except (OSError, ValueError) as error:
-        parser.exit(1, f"{parser.prog}: {error}\n")
+    table = evaluation_table(
+        args.data_dir, args.runs_dir, (args.split,) if args.split else SPLITS,
+    )
     print(table)
 
 

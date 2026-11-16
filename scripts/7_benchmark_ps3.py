@@ -165,28 +165,25 @@ def main() -> None:
     parser.add_argument("--output", type=Path, default=REPO / "output/ps3/benchmark.json")
     parser.add_argument("--measure-rerank", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
-    try:
-        if args.measure_rerank:
-            rerank_setup_and_score(args.data_dir, args.output, args.output)
-            return
+    if args.measure_rerank:
+        rerank_setup_and_score(args.data_dir, args.output, args.output)
+        return
 
-        with TemporaryDirectory(prefix="ps3-bench-") as temporary:
-            work = Path(temporary)
-            target = work / "target"
-            subprocess.run(
-                [
-                    "cargo", "build", "--release", "--locked", "--manifest-path",
-                    str(args.repo / "Cargo.toml"), "--target-dir", str(target),
-                    "--bin", "search", "--bin", "search-engine",
-                ],
-                check=True,
-            )
-            report = compare(args, work, target / "release/search", target / "release/search-engine")
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-        print(f"Saved {args.output}")
-    except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as error:
-        parser.exit(1, f"{parser.prog}: {error}\n")
+    with TemporaryDirectory(prefix="ps3-bench-") as temporary:
+        work = Path(temporary)
+        target = work / "target"
+        subprocess.run(
+            [
+                "cargo", "build", "--release", "--locked", "--manifest-path",
+                str(args.repo / "Cargo.toml"), "--target-dir", str(target),
+                "--bin", "search", "--bin", "search-engine",
+            ],
+            check=True,
+        )
+        report = compare(args, work, target / "release/search", target / "release/search-engine")
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    print(f"Saved {args.output}")
 
 
 if __name__ == "__main__":

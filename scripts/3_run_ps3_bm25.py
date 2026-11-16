@@ -15,25 +15,16 @@ QUERY_FILES = {
 def select_queries(qrels: Path, queries: Path, output: Path) -> int:
     with qrels.open(encoding="utf-8") as source:
         wanted = {line.split(maxsplit=1)[0] for line in source if line.strip()}
-    if not wanted:
-        raise ValueError(f"{qrels}: no judged query IDs")
-
     missing = wanted.copy()
     with queries.open(encoding="utf-8") as source, output.open("w", encoding="utf-8") as target:
-        for line_number, line in enumerate(source, start=1):
-            query_id, separator, _ = line.rstrip("\n").partition("\t")
-            if query_id not in wanted:
-                continue
-            if not separator:
-                raise ValueError(f"{queries}:{line_number}: missing query text field")
-            if query_id not in missing:
-                raise ValueError(f"{queries}:{line_number}: duplicate query ID {query_id}")
-            target.write(line)
-            missing.remove(query_id)
+        for line in source:
+            query_id = line.rstrip("\n").split("\t", 1)[0]
+            if query_id in missing:
+                target.write(line)
+                missing.remove(query_id)
 
     if missing:
-        examples = ", ".join(sorted(missing)[:5])
-        raise ValueError(f"{queries}: missing text for {len(missing):,} judged queries ({examples})")
+        raise ValueError(f"{queries}: missing text for {len(missing):,} judged queries")
     return len(wanted)
 
 
@@ -62,6 +53,7 @@ def run_split(split: str, data_dir: Path, index: Path, output_dir: Path) -> None
                 stdout=output,
                 check=True,
             )
+            # (query_id    passage_id    rank    bm25_score) is the expected output format, so no further processing is needed.
         staged_result.replace(result_path)
     print(f"Saved {result_path}", flush=True)
 
@@ -90,14 +82,9 @@ def main() -> int:
     index = args.index.resolve()
     output_dir = args.output_dir.resolve()
     splits = (args.split,) if args.split else QUERY_FILES
-    try:
-        output_dir.mkdir(parents=True, exist_ok=True)
-        for split in splits:
-            run_split(split, data_dir, index, output_dir)
-    except subprocess.CalledProcessError as error:
-        parser.exit(1, f"{parser.prog}: BM25 search failed for {split} (exit {error.returncode})\n")
-    except (OSError, ValueError) as error:
-        parser.exit(1, f"{parser.prog}: {error}\n")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for split in splits:
+        run_split(split, data_dir, index, output_dir)
     return 0
 
 
